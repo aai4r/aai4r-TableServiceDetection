@@ -14,7 +14,7 @@ import numpy as np
 # model
 import _init_paths
 import argparse
-from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v5 import get_args_parser
+from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v6 import get_args_parser
 import MultiStreamDeformableDETR.util.misc as utils
 import torch
 import torchvision.transforms as T
