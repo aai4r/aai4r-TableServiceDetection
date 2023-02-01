@@ -1,0 +1,4 @@
+# ninja log v5
+0	6909	1647400379644448458	/home/yochin/Desktop/Deformable-DETR/models/ops/build/temp.linux-x86_64-3.7/home/yochin/Desktop/Deformable-DETR/models/ops/src/cpu/ms_deform_attn_cpu.o	b9fa0b86d2a9edf1
+0	20625	1647400393352796475	/home/yochin/Desktop/Deformable-DETR/models/ops/build/temp.linux-x86_64-3.7/home/yochin/Desktop/Deformable-DETR/models/ops/src/cuda/ms_deform_attn_cuda.o	f994e1931fa4ba8
+0	25008	1647400397736907776	/home/yochin/Desktop/Deformable-DETR/models/ops/build/temp.linux-x86_64-3.7/home/yochin/Desktop/Deformable-DETR/models/ops/src/vision.o	f41b4ba50adb3e26
