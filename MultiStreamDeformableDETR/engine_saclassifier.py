@@ -19,12 +19,12 @@ from typing import Iterable
 import torch
 import util.misc as utils
 # from datasets.coco_eval import CocoEvaluator
-from datasets.panoptic_eval import PanopticEvaluator
+# from datasets.panoptic_eval import PanopticEvaluator
 from datasets.progress_amount_eval import CocoEvaluator, ProgressEvaluator, AmountEvaluator
 from datasets.data_prefetcher import data_prefetcher
 from my_debug import save_tensor_as_image, convert_sample_and_boxes, tensor_to_pil, draw_bboxes_on_pil
 import torch.nn.functional as F
-import xml.etree.ElementTree as ET
+# import xml.etree.ElementTree as ET
 import numpy as np
 import util.misc as utils
 from util.misc import NestedTensor
