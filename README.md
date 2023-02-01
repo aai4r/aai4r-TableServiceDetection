@@ -32,7 +32,7 @@ The object detector is modified based on [Deformable DETR](https://github.com/fu
     python test.py
     ```
 
-5. Download a [checkpoint.pth]() file.
+5. Download a [checkpoint.pth](https://drive.google.com/file/d/1vjt8Jdhn6jatX66z0pWGJDmlPJTmi4F8/view?usp=sharing) file.
 
    
 ### Run
