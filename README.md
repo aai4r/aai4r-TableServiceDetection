@@ -19,12 +19,20 @@ The object detector is modified based on [Deformable DETR](https://github.com/fu
     cd aai4r-TableServiceDetection
     ```
 
-2. Install required modules
+2. Install required modules.
     ```bash
     conda env create -f env.yaml
     ```
 
-3. Download a [checkpoint.pth]() file.
+3. Compiling CUDA operators in [Deformable DETR](https://github.com/fundamentalvision/Deformable-DETR).
+    ```bash
+    cd ./models/ops
+    sh ./make.sh
+    # unit test (should see all checking is True)
+    python test.py
+    ```
+
+5. Download a [checkpoint.pth]() file.
 
    
 ### Run
