@@ -6,13 +6,11 @@ This module is a part of [Cloud Robot Project](https://github.com/aai4r/aai4r-ma
 The module has three parts, an object detector, a table status classifier, and a table service detector.
 The object detector is modified based on [Deformable DETR](https://github.com/fundamentalvision/Deformable-DETR).
 
-### Environment
-* python 3.7
-* pytorch 1.5.1
-* pytorchvision 0.6.1
-* (All included in the env.yaml)
-
 ### Installation
+0. Requirements
+* Linux, CUDA>=9.2, GCC>=5.4
+* Python>=3.7
+
 1. Clone this repository.
     ```bash
     git clone https://github.com/aai4r/aai4r-TableServiceDetection
@@ -21,7 +19,8 @@ The object detector is modified based on [Deformable DETR](https://github.com/fu
 
 2. Install required modules.
     ```bash
-    conda env create -f env.yaml
+    pip install torch==1.5.1 torchvision==0.6.1
+    pip install -r requirements.txt
     ```
 
 3. Compiling CUDA operators in [Deformable DETR](https://github.com/fundamentalvision/Deformable-DETR).
@@ -32,7 +31,7 @@ The object detector is modified based on [Deformable DETR](https://github.com/fu
     python test.py
     ```
 
-5. Download a [checkpoint.pth](https://drive.google.com/file/d/1vjt8Jdhn6jatX66z0pWGJDmlPJTmi4F8/view?usp=sharing) file.
+4. Download a [checkpoint.pth](https://drive.google.com/file/d/1vjt8Jdhn6jatX66z0pWGJDmlPJTmi4F8/view?usp=sharing) file.
 
    
 ### Run
