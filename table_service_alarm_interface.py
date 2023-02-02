@@ -13,6 +13,7 @@ import numpy as np
 
 # model
 import _init_paths
+import os
 import argparse
 from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v6 import get_args_parser
 import MultiStreamDeformableDETR.util.misc as utils
@@ -31,8 +32,6 @@ from PIL import ImageDraw
 
 class TableServiceAlarm:
     def __init__(self, model_path):
-        # self.tsa = TableServiceAlarm(model_path)
-
         # setup arguments
         self.start_time_in_seconds = None
 
@@ -40,10 +39,10 @@ class TableServiceAlarm:
                                          parents=[get_args_parser()])
         # add script's argument at here
         cmd_args = [
-            '--resume', 'checkpoint.pth',
+            '--resume', os.path.join(model_path, 'checkpoint.pth'),
             '--backbone', 'resnet50',
-            '--class_list', 'detection_label.txt',
-            '--sac_class_list', 'sac_label.txt',
+            '--class_list', os.path.join(model_path, 'detection_label.txt'),
+            '--sac_class_list', os.path.join(model_path, 'sac_label.txt'),
 
             '--use_progress',
             '--use_amount',
@@ -295,6 +294,10 @@ class TableServiceAlarm:
                 label_index = label - 1  # background is in label, but not in label_index
                 class_name = self.classes[label_index]
 
+                xmin = int(xmin)
+                ymin = int(ymin)
+                xmax = int(xmax)
+                ymax = int(ymax)
                 detection_results.append([xmin, ymin, xmax, ymax, label_index])
 
                 if draw_result:
@@ -378,53 +381,59 @@ class TableServiceAlarm:
 class TableServiceAlarmRequestHandler(object):
     def __init__(self, model_path):
         self.tsa = TableServiceAlarm(model_path)
+        self.det_classes = self.tsa.classes
+        self.sac_classes = self.tsa.sac_classes
 
     def process_start_meal(self, start_time_in_seconds):
         self.tsa.setStartTime(start_time_in_seconds)
 
-    def process_inference_request(self, img):
-        # 1. Read an image and convert it to a numpy array
-        # pixels = np.array(img)
-
-        # 2. Perform food detection
-        # - result is a list of [x1,y1,x2,y2,class_id]
-        # - ex) result = [(100,100,200,200,154), (200,300,200,300,12)]
-        current_time_in_seconds = 600.0    # seconds
-        detection_results, service_results, vis_img = self.tsa.detect(img, current_time_in_seconds, draw_result=True)
+    def process_inference_request(self, ipl_img, current_time_in_seconds):
+        # 1. Perform detection and classification
+        # - detection_result is a list of [x1,y1,x2,y2,class_id]
+        # - ex) result = [[100,100,200,200,154], [200,300,200,300,12]]
+        # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
+        # - ex) result = [0.7, 0.1, 0.1, 0.2]
+        detection_results, service_results, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
         return detection_results, service_results, vis_img
 
-    def process_inference_request_imgurl(self, img_url):
-        # 1. Read an image and convert it to a numpy array
+    def process_inference_request_imgurl(self, image_url, current_time_in_seconds):
+        # 1. Read an url image and convert it to an ipl image
         response = requests.get(image_url)
-        img = Image.open(BytesIO(response.content))     # read as rgb
-        # pixels = np.array(img)
+        ipl_img = Image.open(BytesIO(response.content))     # read as rgb
 
-        # 2. Perform food detection
-        # - result is a list of [x1,y1,x2,y2,class_id]
+        # 1. Perform detection and classification
+        # - detection_result is a list of [x1,y1,x2,y2,class_id]
         # - ex) result = [(100,100,200,200,154), (200,300,200,300,12)]
-        current_time_in_seconds = 600.0    # seconds
-        detection_results, service_results, vis_img = self.tsa.detect(img, current_time_in_seconds, draw_result=True)
+        # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
+        # - ex) result = [0.7, 0.1, 0.1, 0.2]
+        detection_results, service_results, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
         return detection_results, service_results, vis_img
 
 
 # one time test
 if __name__ == '__main__':
-    image_url = 'https://images.unsplash.com/photo-1576867757603-05b134ebc379?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8&auto=format&fit=crop&w=1170&q=80'
-    model_path = './output'
+    model_path = '.'
     handler = TableServiceAlarmRequestHandler(model_path)   # init
-    print('FoodDetectionRequestHandler is initialized!')
+    print('TableServiceAlarmRequestHandler is initialized!')
     handler.process_start_meal(0.0)
-    detection_results, service_results, im2show = handler.process_inference_request_imgurl(image_url)        # request
+    ipl_img = Image.open('example.jpg')  # read as rgb
+    detection_results, service_results, im2show = handler.process_inference_request(ipl_img, 300)        # request
+    # detection_results, service_results, im2show = handler.process_inference_request_imgurl(image_url, 300)        # request
 
     # 3. Print the result
     print("Detection Result: {}".format(json.dumps(detection_results)))
     for result in detection_results:
-        print("  BBox(x1={},y1={},x2={},y2={}) => {}".format(result[0],result[1],result[2],result[3],result[4]))
+        print(f"  BBox(x1={result[0]},y1={result[1]},x2={result[2]},y2={result[3]}) => {handler.det_classes[result[4]]}")
+
+    print("\n")
+    print("Possible Service Results: ")
+    for sac_name, result in zip(handler.sac_classes, service_results):
+        print(f"  {sac_name}: {result:.4f}")
 
     # 4. Save the result image
     if im2show is not None:
-        im2show.save('imgurl_debug.jpg')
+        im2show.save('imgurl_debug_image.jpg')
 
     print('FoodDetectionRequestHandler request is processed!')
