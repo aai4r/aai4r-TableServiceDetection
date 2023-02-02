@@ -36,8 +36,8 @@ The object detector is modified based on [Deformable DETR](https://github.com/fu
 
    
 ### Run
-Run the demo code with the sample images.
+Run the demo code with the sample image (that is in the python code).
    ```bash
    python table_service_alarm_interface.py
    ```
-   
+A detailed explanation is written in the sample code.

@@ -414,15 +414,23 @@ class TableServiceAlarmRequestHandler(object):
 
 # one time test
 if __name__ == '__main__':
+    # 1. Initialize
     model_path = '.'
     handler = TableServiceAlarmRequestHandler(model_path)   # init
     print('TableServiceAlarmRequestHandler is initialized!')
-    handler.process_start_meal(0.0)
-    ipl_img = Image.open('example.jpg')  # read as rgb
-    detection_results, service_results, im2show = handler.process_inference_request(ipl_img, 300)        # request
-    # detection_results, service_results, im2show = handler.process_inference_request_imgurl(image_url, 300)        # request
 
-    # 3. Print the result
+    # 2. Set the start time (This information is used as an input)
+    handler.process_start_meal(0.0)
+
+    # 3. Give an image and get the results
+    ipl_img = Image.open('example.jpg')  # read as rgb
+    duration_time_in_sec = 300
+    detection_results, service_results, im2show = \
+        handler.process_inference_request(ipl_img, duration_time_in_sec)        # request
+    # detection_results, service_results, im2show = \
+    #     handler.process_inference_request_imgurl(image_url, duration_time_in_sec)        # request
+
+    # 4. Print the results
     print("Detection Result: {}".format(json.dumps(detection_results)))
     for result in detection_results:
         print(f"  BBox(x1={result[0]},y1={result[1]},x2={result[2]},y2={result[3]}) => {handler.det_classes[result[4]]}")
@@ -432,8 +440,8 @@ if __name__ == '__main__':
     for sac_name, result in zip(handler.sac_classes, service_results):
         print(f"  {sac_name}: {result:.4f}")
 
-    # 4. Save the result image
+    # 5. Save the result image
     if im2show is not None:
         im2show.save('imgurl_debug_image.jpg')
 
-    print('FoodDetectionRequestHandler request is processed!')
+    print('TableServiceAlarmRequestHandler request is processed!')
