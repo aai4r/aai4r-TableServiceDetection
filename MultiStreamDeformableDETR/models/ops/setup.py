@@ -35,6 +35,9 @@ def get_extensions():
 
     # CUDA_HOME = '/usr/local/cuda'
     # print(torch.cuda.is_available())
+
+    print('torch.cuda.is_available(): ', torch.cuda.is_available())
+    print('CUDA_HOME: ', CUDA_HOME)
     
     if torch.cuda.is_available() and CUDA_HOME is not None:
         extension = CUDAExtension
@@ -47,7 +50,7 @@ def get_extensions():
             "-D__CUDA_NO_HALF2_OPERATORS__",
         ]
     else:
-        raise NotImplementedError('Cuda is not availabel')
+        raise NotImplementedError('Cuda is not available')
 
     sources = [os.path.join(extensions_dir, s) for s in sources]
     include_dirs = [extensions_dir]
