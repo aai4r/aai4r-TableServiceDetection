@@ -22,7 +22,7 @@ def tensor_to_pil(tensor_image, orig_size=None):
     return pil_image
 
 def draw_bboxes_on_pil(pil_image, boxes, labels, scores=None, vis_th=0.5, no_bbox=False, box_color=(0, 0, 255)):
-    font = ImageFont.truetype('/usr/share/fonts/NanumGothic/NanumGothic-Regular.ttf', 20)
+    # font = ImageFont.truetype('/usr/share/fonts/NanumGothic/NanumGothic-Regular.ttf', 20)
 
     num_boxes = boxes.size(0)
     draw = ImageDraw.Draw(pil_image)
@@ -33,15 +33,18 @@ def draw_bboxes_on_pil(pil_image, boxes, labels, scores=None, vis_th=0.5, no_bbo
                     draw.rectangle((int(boxes[i, 0]), int(boxes[i, 1]),
                                     int(boxes[i, 2]), int(boxes[i, 3])),
                                    outline=box_color, width=2)
-                draw.text((int(boxes[i, 0]), int(boxes[i, 1])), '%s_%.2f' % (labels[i], scores[i]),
-                          font=font)
+                # draw.text((int(boxes[i, 0]), int(boxes[i, 1])), '%s_%.2f' % (labels[i], scores[i]),
+                #           font=font)
+                draw.text((int(boxes[i, 0]), int(boxes[i, 1])), '%s_%.2f' % (labels[i], scores[i]))
+
         else:
             if no_bbox is False:
                 draw.rectangle((int(boxes[i, 0]), int(boxes[i, 1]),
                                 int(boxes[i, 2]), int(boxes[i, 3])),
                                outline=box_color, width=2)
 
-            draw.text((int(boxes[i, 0]), int(boxes[i, 1])), str(int(labels[i])), font=font)
+            # draw.text((int(boxes[i, 0]), int(boxes[i, 1])), str(int(labels[i])), font=font)
+            draw.text((int(boxes[i, 0]), int(boxes[i, 1])), str(int(labels[i])))
 
     return pil_image
 
