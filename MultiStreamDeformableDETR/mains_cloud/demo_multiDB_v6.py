@@ -35,8 +35,8 @@ from models.service_detector import build_SAclassifier
 from my_debug import draw_bboxes_on_pil, images_to_video
 from engine_saclassifier import get_duration
 
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 
 
 # v2. add nms for merging outputs
