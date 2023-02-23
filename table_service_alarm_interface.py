@@ -155,17 +155,7 @@ class TableServiceAlarm:
         self.start_time_in_seconds = start_time_in_seconds
 
 
-    def detect(self, ipl_img, current_time_in_seconds, draw_result=False):
-        if self.start_time_in_seconds is None:
-            print('self.start_time_in_seconds is None!')
-            return None, None, None
-        else:
-            duration_seconds = current_time_in_seconds - self.start_time_in_seconds
-
-            if duration_seconds < 0:
-                print('duration_seconds is less than zero!')
-                return None, None, None
-
+    def detect(self, ipl_img, duration_seconds, draw_result=False):
         t0 = time.time()
 
         with torch.no_grad():
