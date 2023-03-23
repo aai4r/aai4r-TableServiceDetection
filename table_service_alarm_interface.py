@@ -3,13 +3,16 @@ from __future__ import division
 from __future__ import print_function
 
 # interface
+import pdb
 
 import requests
 import json
 from PIL import Image
 from io import BytesIO
+import numpy as np
 
 # model
+import _init_paths
 import os
 import argparse
 from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v6 import get_args_parser
