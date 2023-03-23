@@ -18,6 +18,7 @@ from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw, ImageEnhance
 import torchvision.transforms as T
 
+import _init_paths
 import numpy as np
 import torch
 import util.misc as utils
@@ -33,7 +34,8 @@ import pickle
 # import xml.etree.cElementTree as ET
 from models.service_detector import build_SAclassifier
 from my_debug import draw_bboxes_on_pil, images_to_video
-from engine_saclassifier import get_duration
+from my_debug import get_duration_using_startDate, get_start_time_by_date
+from service_manager import ServiceManager
 
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "6"
@@ -43,7 +45,7 @@ from engine_saclassifier import get_duration
 # v3. apply postproc
 # v4. apply point-based matching (v3 used ROI-based matching)
 # v5. predict the service proposals
-# v6. remove trackers (no more used, heavy in real-time application)
+# v6. remove trackers (no more used, heavy in real-time application), make variables_name to be clearer
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -179,6 +181,8 @@ def get_args_parser():
     # sequence input
     parser.add_argument('--num_prev_imgs', default=0, type=int)
 
+    parser.add_argument('--processing_per_frames', default=1, type=int)
+
     # for demo
     parser.add_argument('--class_list', default='coco')
     parser.add_argument('--sac_class_list', default='coco')
@@ -282,7 +286,7 @@ transform = T.Compose([
 #     tree.write(filename_alm)
 
 
-def main(args, imgs_dir=None, output_dir=None):
+def main(args, imgs_dir=None, output_dir=None, cap_date=None):
     # args.output_dir = os.path.splitext(args.resume)[0]
 
     if imgs_dir is not None:
@@ -304,6 +308,8 @@ def main(args, imgs_dir=None, output_dir=None):
     Path(output_alarm_dir).mkdir(parents=True, exist_ok=True)
     Path(output_alarm_anno_dir).mkdir(parents=True, exist_ok=True)
     Path(output_alarm_imgs_dir).mkdir(parents=True, exist_ok=True)
+
+    fid = open(os.path.join(args.output_dir, cap_date + '.txt'), 'w')
 
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
@@ -374,7 +380,10 @@ def main(args, imgs_dir=None, output_dir=None):
     # dataset_val = build_dataset(image_set='val', args=args)
     # base_ds = get_coco_api_from_dataset(dataset_val)
 
-    list_files = sorted(os.listdir(args.imgs_dir))
+    list_files = sorted([item for item in os.listdir(args.imgs_dir) if item.endswith('.jpg')])
+
+    start_filename = list_files[0]
+    start_date = start_filename.split('.')[0].split('_')[1]
 
     number_of_colors = len(classes)
     list_colors = ["#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
@@ -383,19 +392,28 @@ def main(args, imgs_dir=None, output_dir=None):
     # filename_list = os.path.join(output_alarm_dir, 'output_list.txt')
     # fid = open(filename_list, 'w')
 
+    service_manager = ServiceManager()
+
+    start_time_in_sec = get_start_time_by_date(cap_date)
+    service_manager.set_start_time(start_time_in_sec)
+
     with torch.no_grad():
         last_cap_sec = 0
         duration_sec = 60.0 / float(args.process_n_per_min)
+
+        list_img_seq = []
+        list_x_duration = []
+
         for i_th, img_file in enumerate(list_files[args.skip_first_n_image:]):
 
             # get captured time
             im_date = img_file[:-4].split('_')[-1].split('-')
             if len(im_date) == 6:
-                im_year, im_mon, im_day, im_hrs, im_min, im_sec = im_date
-                im_sec = int(im_sec)
+                im_year, im_mon, im_day, im_hrs, im_min, im_sec_only = im_date
+                im_sec = int(im_sec_only)
             else:
-                im_year, im_mon, im_day, im_hrs, im_min, im_sec, im_msec = im_date
-                im_sec = float(im_sec + '.' + im_msec)
+                im_year, im_mon, im_day, im_hrs, im_min, im_sec_only, im_msec = im_date
+                im_sec = float(im_sec_only + '.' + im_msec)
             im_hrs = int(im_hrs)
             im_min = int(im_min)
 
@@ -430,239 +448,265 @@ def main(args, imgs_dir=None, output_dir=None):
 
                 # mean-std normalize the input image (batch-size: 1)
                 im = transform_resize(im_org)
-                img = transform(im).unsqueeze(0)
+                img_x = transform(im).unsqueeze(0)
+                list_img_seq.append(img_x)
 
-                img = img.cuda()
-                # propagate through the model
-                outputsG = modelG(img)
+                # add duration time
+                str_date = img_file.split('.')[0].split('_')[1]
+                duration_norm = get_duration_using_startDate(str_date, start_date)
+                list_x_duration.append(duration_norm)
 
-                if True:
-                    # dataset_train.coco.loadImgs(self.ids[idx])[0]['file_name']
-                    x_duration = []
+                # remove over given length
+                if len(list_img_seq) > args.num_prev_imgs + 1:
+                    list_img_seq.pop(0)
+                    list_x_duration.pop(0)
 
-                    str_date = img_file.split('.')[0].split('_')[1]
-                    duration_norm = get_duration(str_date)
-                    x_duration.append(duration_norm)
-                    x_duration = torch.stack(x_duration, dim=0)
-                    x_duration = x_duration.unsqueeze(dim=1)
-                    x_duration = x_duration.cuda()
+                # list to tensor
+                img_seq = torch.cat(list_img_seq, dim=0)
+                img_seq = img_seq.cuda()        # [1, 3, 800, 1422]
+
+                x_duration = torch.stack(list_x_duration, dim=0)    #
+                x_duration = x_duration.unsqueeze(dim=1).cuda()     # n_T, 1
+
+                if int(im_sec_only) % args.processing_per_frames == 0:
+                    outputsG = modelG(img_seq)
                     outputsG['duration'] = x_duration
-                    # add also in evaluate
+                    outputsH = modelH(outputsG)
+                    outputs = {**outputsG, **outputsH}
 
-                outputsH = modelH(outputsG)
-                outputs = {**outputsG, **outputsH}
+                    im_w, im_h = im.size
+                    target_sizes = torch.tensor([[im_h, im_w]])
+                    target_sizes = target_sizes.cuda()
 
-                im_w, im_h = im.size
-                target_sizes = torch.tensor([[im_h, im_w]])
-                target_sizes = target_sizes.cuda()
+                    # if output is a multi_batch, get the last one only
+                    for key_outputsG in outputsG.keys():
+                        if torch.is_tensor(outputsG[key_outputsG]):
+                            outputsG[key_outputsG] = outputsG[key_outputsG][-1:]
 
-                if 'bbox_attn' in postprocessors.keys():
-                    resultsG, resultsH = postprocessors['bbox_attn'](outputsG, outputsH,
-                                                                     target_sizes)
+                    for key_outputsH in outputsH.keys():
+                        if torch.is_tensor(outputsH[key_outputsH]):
+                            outputsH[key_outputsH] = outputsH[key_outputsH][-1:]
 
-                # out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
-                # # out_logits: [n_batch(1), n_query(300 x n_trfm), n_class+1]
-                # # out_bbox: [n_batch(1), n_query(300 x n_trfm), 4]
-                # prob = out_logits.sigmoid()  # [n_batch(1), n_query, n_class+1]
-                # topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)  # just pick the top-k scores and indexes
-                # scores = topk_values
-                # topk_boxes = topk_indexes // out_logits.shape[2]  # share -> n_query_index
-                # labels = topk_indexes % out_logits.shape[2]  # remain -> n_class_index (reordered by topk_boxes)
-                # boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-                # boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))    # select topk_boxes
-                #
-                # # and from relative [0, 1] to absolute [0, height] coordinates
-                # img_h, img_w = target_sizes.unbind(1)
-                # scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-                # boxes = boxes * scale_fct[:, None, :]
 
-                scores = resultsG[0]['scores']  # [100]
-                labels = resultsG[0]['labels']
-                boxes = resultsG[0]['boxes']
+                    if 'bbox_attn' in postprocessors.keys():
+                        # hs_output_weights, n_sac_classes, boxes_xyxy
+                        resultsG, resultsH = postprocessors['bbox_attn'](outputsG, outputsH,
+                                                                         target_sizes)
 
-                keep = scores > args.vis_th
-                boxes = boxes[keep]
-                labels = labels[keep]
-                scores = scores[keep]  # topk & greater than args.vis_th
+                    # out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+                    # # out_logits: [n_batch(1), n_query(300 x n_trfm), n_class+1]
+                    # # out_bbox: [n_batch(1), n_query(300 x n_trfm), 4]
+                    # prob = out_logits.sigmoid()  # [n_batch(1), n_query, n_class+1]
+                    # topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)  # just pick the top-k scores and indexes
+                    # scores = topk_values
+                    # topk_boxes = topk_indexes // out_logits.shape[2]  # share -> n_query_index
+                    # labels = topk_indexes % out_logits.shape[2]  # remain -> n_class_index (reordered by topk_boxes)
+                    # boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+                    # boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))    # select topk_boxes
+                    #
+                    # # and from relative [0, 1] to absolute [0, height] coordinates
+                    # img_h, img_w = target_sizes.unbind(1)
+                    # scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
+                    # boxes = boxes * scale_fct[:, None, :]
 
-                num_topk_vis_th = sum(keep).item()
-                print(f'{num_topk_vis_th} bboxes are selected > {args.vis_th}')
+                    scores_all = resultsG[0]['scores']  # [100]
+                    labels_all = resultsG[0]['labels']
+                    boxes_all = resultsG[0]['boxes']
 
-                if args.use_amount:
-                    assert 'amount_score' in resultsH.keys()  # 'amount_score' must be in resultsH
-                    amount_score = resultsH['amount_score'][0]  # [100, 50]
-                    res_amount_logits = amount_score[keep]  # [keep, 50]
 
-                    if True:
-                        # fill zero to amount_score at not bbox with 'food(1)' and 'drink(2)'
-                        amount_score[(labels > 2).nonzero(as_tuple=True)] = 0.0  # this cannot change value.
-                        # amount_score.index_fill_(1, (labels > 2).nonzero(as_tuple=True)[1], 0.)
+                    keep = scores_all > args.vis_th
+                    boxes_keep = boxes_all[keep]
+                    labels_keep = labels_all[keep]
+                    scores_keep = scores_all[keep]  # topk & greater than args.vis_th    [keep]
 
-                    # [1, n_q, n_amount] -> [100, n_amount] -> [n_keep, n_amount]
-                    res_amount_prob = F.softmax(res_amount_logits, dim=1)  # [n_keep, n_amount]
-                    amount_prob, res_amount = torch.topk(res_amount_prob, k=3,
-                                                         dim=1)  # [n_q, k], topk_prob, topk_class_index
-                    n_div = 100 // res_amount_logits.size(1)
-                    amount_pred = ((res_amount.type(torch.float32) * n_div) + n_div / 2) * 0.01
-                    # amount_prob: topk_prob  [100, topk]
-                    # amount_pred: topk_class [100, topk]
-                    # res_amount: 0, n_div = 2 -> amount_pred = 1
-                    # res_amount: 1, n_div = 2 -> amount_pred = 3
-                    # ...
-                    # res_amount: 49, n_div = 2 -> amount_pred = 99
+                    num_topk_vis_th = sum(keep).item()
+                    print(f'{num_topk_vis_th} bboxes are selected > {args.vis_th}')
 
-                    res_table = ((torch.arange(0, res_amount_logits.size(
-                        1)) * n_div) + n_div / 2) * 0.01
-                    res_table = res_table.unsqueeze(0)
-                    res_table = res_table.expand(res_amount_prob.size(0), -1)  # n_q, n_class
-                    amount_pred_weighted = torch.sum(res_amount_prob * res_table.cuda(), dim=1)
-                    # amount_pred_weighted: top1_class (computed by prob_weighted_sum)
+                    if args.use_amount:
+                        assert 'amount_score' in resultsH.keys()  # 'amount_score' must be in resultsH
+                        amount_score_all = resultsH['amount_score'][0]  # [100, 50]
+                        amount_logits_keep = amount_score_all[keep]  # [keep, 50]
 
-                    # remove 'amount' except for 'food' and 'drink' should be all same values,
-                    # amount_pred[(labels > 2).nonzero(as_tuple=True)]
-                    # amount_pred_weighted[(labels > 2).nonzero(as_tuple=True)]
+                        # get the food amount by choosing top-3
+                        # [1, n_q, n_amount] -> [100, n_amount] -> [n_keep, n_amount]
+                        amount_prob_keep = F.softmax(amount_logits_keep, dim=1)  # [n_keep, n_amount]
+                        amount_prob_keep_top3, amount_keep_top3_index = torch.topk(amount_prob_keep, k=3,
+                                                                                   dim=1)  # [n_q, k], topk_prob, topk_class_index
+                        n_div = 100 // amount_logits_keep.size(1)       # calculate the degree per one bin
+                        amount_pred_keep = ((amount_keep_top3_index.type(torch.float32) * n_div) + n_div / 2) * 0.01
+                        # amount_prob: topk_prob  [100, topk]
+                        # amount_pred: topk_class [100, topk]
+                        # res_amount: 0, n_div = 2 -> amount_pred = 1
+                        # res_amount: 1, n_div = 2 -> amount_pred = 3
+                        # ...
+                        # res_amount: 49, n_div = 2 -> amount_pred = 99
 
-                if args.use_progress:
-                    out_progress_score = outputs['progress_score']
-                    progress_prob = F.softmax(out_progress_score[0, :], dim=0)
-                print('processing time: ', time.time() - t0)
+                        # get the food amount by weighted sum
+                        res_table = ((torch.arange(0, amount_logits_keep.size(1)) * n_div) + n_div / 2) * 0.01
+                        res_table = res_table.unsqueeze(0)
+                        res_table = res_table.expand(amount_prob_keep.size(0), -1)  # n_q, n_class
+                        amount_pred_keep_weighted = torch.sum(amount_prob_keep * res_table.cuda(), dim=1)
+                        # amount_pred_weighted: top1_class (computed by prob_weighted_sum)
 
-                # labels: [N]
-                # scores: [N]
-                # boxes: [1, N, 4]
+                    if args.use_progress:
+                        out_progress_score = outputs['progress_score']
+                        progress_prob = F.softmax(out_progress_score[0, :], dim=0)
+                    print('processing time: ', time.time() - t0)
 
-                filtered_labels = []
-                filtered_scores = []
-                filtered_boxes = []
-                filtered_amount_pred = []
-                filtered_amount_pred_weighted = []
+                    # labels: [N]
+                    # scores: [N]
+                    # boxes: [1, N, 4]
+                    filtered_labels = []
+                    filtered_scores = []
+                    filtered_boxes = []
+                    filtered_amount_pred = []
+                    filtered_amount_pred_weighted = []
 
-                for j_class in range(0, args.num_classes_on_G):
-                    inds = (labels == j_class).nonzero(as_tuple=True)[0].view(-1)
-                    # inds = torch.nonzero(prob[0, :, j_class] > 0.05).view(-1) # ignore this line because already selected top-N scores
+                    for j_class in range(0, args.num_classes_on_G):
+                        inds = (labels_keep == j_class).nonzero(as_tuple=True)[0].view(-1)
+                        # inds = torch.nonzero(prob[0, :, j_class] > 0.05).view(-1) # ignore this line because already selected top-N scores
 
-                    if inds.numel() > 0:
-                        cls_labels = labels[inds]
-                        cls_scores = scores[inds]
-                        _, order = torch.sort(cls_scores, 0, True)
-                        cls_boxes = boxes[inds, :]
-                        cls_amount_pred = amount_pred[inds, :]
-                        cls_amount_pred_w = amount_pred_weighted[inds]
+                        if inds.numel() > 0:
+                            cls_labels = labels_keep[inds]
+                            cls_scores = scores_keep[inds]
+                            _, order = torch.sort(cls_scores, 0, True)
+                            cls_boxes = boxes_keep[inds, :]
+                            # cls_amount_pred = amount_pred_keep[inds, :]
+                            cls_amount_pred_w = amount_pred_keep_weighted[inds]
 
-                        cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1)), 1)
-                        cls_dets = cls_dets[order]
-                        cls_labels = cls_labels[order]
-                        cls_scores = cls_scores[order]
-                        cls_boxes = cls_boxes[order, :]
-                        cls_amount_pred = cls_amount_pred[order, :]
-                        cls_amount_pred_w = cls_amount_pred_w[order]
-                        # Overlap threshold used for non-maximum suppression (suppress boxes with
-                        # IoU >= this threshold)
-                        keep = nms(cls_boxes, cls_scores, 0.3)  #
+                            cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1)), 1)
+                            cls_dets = cls_dets[order]
+                            cls_labels = cls_labels[order]
+                            cls_scores = cls_scores[order]
+                            cls_boxes = cls_boxes[order, :]
+                            # cls_amount_pred = cls_amount_pred[order, :]
+                            cls_amount_pred_w = cls_amount_pred_w[order]
+                            # Overlap threshold used for non-maximum suppression (suppress boxes with
+                            # IoU >= this threshold)
+                            keep = nms(cls_boxes, cls_scores, 0.3)  #
 
-                        # cls_dets = cls_dets[keep.view(-1).long()]
+                            # cls_dets = cls_dets[keep.view(-1).long()]
 
-                        filtered_labels.append(cls_labels[keep.view(-1).long()])
-                        filtered_scores.append(cls_scores[keep.view(-1).long()])
-                        filtered_boxes.append(cls_boxes[keep.view(-1).long()])
-                        filtered_amount_pred.append(cls_amount_pred[keep.view(-1).long()])
-                        filtered_amount_pred_weighted.append(
-                            cls_amount_pred_w[keep.view(-1).long()])
+                            filtered_labels.append(cls_labels[keep.view(-1).long()])
+                            filtered_scores.append(cls_scores[keep.view(-1).long()])
+                            filtered_boxes.append(cls_boxes[keep.view(-1).long()])
+                            # filtered_amount_pred.append(cls_amount_pred[keep.view(-1).long()])
+                            filtered_amount_pred_weighted.append(
+                                cls_amount_pred_w[keep.view(-1).long()])
 
-                labels = torch.cat(filtered_labels, dim=0)  # [n_bboxes]
-                scores = torch.cat(filtered_scores, dim=0)
-                boxes = torch.cat(filtered_boxes, dim=0)
-                amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)  # [n_bboxes]
+                    labels = torch.cat(filtered_labels, dim=0)  # [n_bboxes]
+                    scores = torch.cat(filtered_scores, dim=0)
+                    boxes = torch.cat(filtered_boxes, dim=0)
+                    amount_preds_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)  # [n_bboxes]
 
-                source_img = im.convert("RGB")  # im == cropped image in PIL.Image type
-                draw = ImageDraw.Draw(source_img)
+                    source_img = im.convert("RGB")  # im == cropped image in PIL.Image type
+                    draw = ImageDraw.Draw(source_img)
 
-                # font = ImageFont.truetype('arial.ttf', 15)
+                    # font = ImageFont.truetype('arial.ttf', 15)
 
-                # print("Boxes: ", boxes.tolist())
-                for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in enumerate(
-                        zip(labels.tolist(), scores.tolist(), boxes.tolist(),
-                            amount_pred_weighted.tolist())):
+                    # print("Boxes: ", boxes.tolist())
+                    for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in enumerate(
+                            zip(labels.tolist(), scores.tolist(), boxes.tolist(),
+                                amount_preds_weighted.tolist())):
 
-                    label_index = label - 1  # background is in label, but not in label_index
+                        label_index = label - 1  # background is in label, but not in label_index
 
-                    class_name = classes[label_index]
+                        class_name = classes[label_index]
 
-                    # label_index = classes.index(class_name)
+                        # label_index = classes.index(class_name)
 
-                    if class_name in ['food', 'drink', 'dish', 'cup']:
-                        pass
-                    else:
-                        amount_pred_weighted = None
+                        if class_name in ['food', 'drink', 'dish', 'cup']:
+                            pass
+                        else:
+                            amount_pred_weighted = None
 
-                    if args.use_amount and amount_pred_weighted is not None:
-                        str_result = '%s (%.1f) \nam: %.0f' % (class_name, score,
-                                                               amount_pred_weighted * 100)
-                        if class_name in ['dish', 'cup']:
-                            draw.rectangle([xmin, ymin - 10,
-                                            xmin + (xmax - xmin) * amount_pred_weighted, ymin - 5],
-                                           fill=list_colors[label_index], width=2)
-                    else:
-                        str_result = '%s (%.1f)' % (class_name, score)
+                        if args.use_amount and amount_pred_weighted is not None:
+                            str_result = '%s (%.1f) \nam: %.0f' % (class_name, score,
+                                                                   amount_pred_weighted * 100)
+                            # # draw the bar to represent the food amount
+                            # if class_name in ['dish', 'cup']:
+                            #     draw.rectangle([xmin, ymin - 10,
+                            #                     xmin + (xmax - xmin) * amount_pred_weighted, ymin - 5],
+                            #                    fill=list_colors[label_index], width=2)
+                        else:
+                            str_result = '%s (%.1f)' % (class_name, score)
 
-                    draw.multiline_text((xmin, ymin), str_result, fill=list_colors[label_index],
-                                        spacing=2)
+                        draw.multiline_text((xmin, ymin), str_result, fill=list_colors[label_index],
+                                            spacing=2)
 
-                    draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=list_colors[label_index],
-                                   width=2)
+                        draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=list_colors[label_index],
+                                       width=2)
 
-                # draw only one in one image
-                if args.use_progress:
-                    # draw.text((10, 10), '%d' % topk_index_progress.item())
-                    draw.text((10, 10), 'progress: %.1f, %.1f, %.1f' %
-                              (progress_prob[0], progress_prob[1], progress_prob[2]))
+                    # draw only one in one image
+                    if args.use_progress:
+                        # draw.text((10, 10), '%d' % topk_index_progress.item())
+                        draw.text((10, 10), 'progress: %.1f, %.1f, %.1f' %
+                                  (progress_prob[0], progress_prob[1], progress_prob[2]))
 
-                # print(alarms)
-                str_alarms = []
+                    # print(alarms)
+                    str_alarms = []
 
-                # draw saclass predictions
-                unscaled_boxes = torch.tensor([[10, 1 + 20, 10, 21], [10, 21 + 20, 10, 41],
-                                               [10, 41 + 20, 10, 61], [10, 61 + 20, 10, 81]])
-                res_scores = torch.sigmoid(outputsH['service_pred_logits'])[0, 1:].detach().cpu()
-                source_img = draw_bboxes_on_pil(source_img, unscaled_boxes, sac_classes,
-                                                scores=res_scores,
-                                                vis_th=0.0, no_bbox=True)
+                    # draw saclass predictions
+                    unscaled_boxes = torch.tensor([[10, 1 + 20, 10, 21], [10, 21 + 20, 10, 41],
+                                                   [10, 41 + 20, 10, 61], [10, 61 + 20, 10, 81]])
+                    res_scores = torch.sigmoid(outputsH['service_pred_logits'])[0, 1:].detach().cpu()
 
-                draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white', spacing=2)
 
-                # draw the attention
-                if 'bbox_attn' in postprocessors.keys():
-                    # resultsH['hs_attn_values']  # n_b, n_class-1, topk(3)
-                    # resultsH['hs_attn_bbox']    # n_b, n_class-1, topk(3), 4
+                    source_img = draw_bboxes_on_pil(source_img, unscaled_boxes, sac_classes,
+                                                    scores=res_scores,
+                                                    vis_th=0.0, no_bbox=True)
 
-                    list_attn = [
-                        ['hs_attn_values', 'hs_attn_bbox'],
-                        ['enc_attn_values', 'enc_attn_bbox'],
-                        ['pca_bbox_attn_values', 'pca_bbox_attn_bbox'],
-                        ['pca_amount_attn_values', 'pca_amount_attn_bbox'],
-                    ]
+                    draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white', spacing=2)
 
-                    for key_attn_value, key_attn_bbox in list_attn:
-                        if key_attn_value in resultsH:
-                            attn_value = resultsH[key_attn_value][0]  # [4, 3] = [n_class,
-                            attn_bbox = resultsH[key_attn_bbox][0]  # [4, 3, 4]
+                    # draw the attention
+                    if 'bbox_attn' in postprocessors.keys():
+                        # resultsH['hs_attn_values']  # n_b, n_class-1, topk(3)
+                        # resultsH['hs_attn_bbox']    # n_b, n_class-1, topk(3), 4
 
-                            for i_c in range(attn_bbox.shape[0]):
-                                if res_scores[i_c] >= 0.5:
-                                    c_attn_bbox = attn_bbox[i_c, :, :]
-                                    c_attn_val = attn_value[i_c, :]
-                                    # keep = nms(c_attn_bbox, c_attn_val, 0.3)  #
-                                    # c_attn_bbox = c_attn_bbox[keep]
-                                    # c_attn_val = c_attn_val[keep]
-                                    source_img = draw_bboxes_on_pil(source_img,
-                                                                    c_attn_bbox,
-                                                                    [i_c] * 100,
-                                                                    scores=c_attn_val,
-                                                                    vis_th=0.01)
+                        list_attn = [
+                            ['hs_attn_values', 'hs_attn_bbox'],
+                            ['enc_attn_values', 'enc_attn_bbox'],
+                            ['pca_bbox_attn_values', 'pca_bbox_attn_bbox'],
+                            ['pca_amount_attn_values', 'pca_amount_attn_bbox'],
+                        ]
 
-                source_img.save(filename_omg)
-                print('result image is saved in ', filename_omg)
+                        for key_attn_value, key_attn_bbox in list_attn:
+                            if key_attn_value in resultsH:
+                                attn_value = resultsH[key_attn_value][0]  # [4, 3] = [n_class,
+                                attn_bbox = resultsH[key_attn_bbox][0]  # [4, 3, 4]
 
+                                for i_c in range(attn_bbox.shape[0]):
+                                    if res_scores[i_c] >= 0.5:
+                                        c_attn_bbox = attn_bbox[i_c, :, :]
+                                        c_attn_val = attn_value[i_c, :]
+                                        # keep = nms(c_attn_bbox, c_attn_val, 0.3)  #
+                                        # c_attn_bbox = c_attn_bbox[keep]
+                                        # c_attn_val = c_attn_val[keep]
+                                        source_img = draw_bboxes_on_pil(source_img,
+                                                                        c_attn_bbox,
+                                                                        [i_c] * 100,
+                                                                        scores=c_attn_val,
+                                                                        vis_th=0.01)
+
+
+                    # choose the representative service
+                    service_results = [round(item.item(), 4) for item in res_scores]  # tensor (4) to list (4)
+                    repr_service = service_manager.process(pred_service_prob=service_results,
+                                                           current_time_in_sec=cur_cap_sec)
+                    print('repr_service: ', repr_service)
+
+                    draw.text((10, 150), f'repr_service: {repr_service}')
+
+                    fid.write(f'{img_file} {service_results} {repr_service}\n')
+                    print(f'{img_file} {service_results} {repr_service}')
+
+                    if repr_service != 'no_service':
+                        filename_omg = filename_omg.replace('.jpg', f'_{repr_service}.jpg')
+
+                    source_img.save(filename_omg)
+                    print('result image is saved in ', filename_omg)
+
+    fid.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script',
@@ -671,12 +715,13 @@ if __name__ == '__main__':
     # main(args)
 
     # add script's argument at here
-    home_dir = '/home/yochin/Desktop/Deformable-DETR'
-    task_name = 'mains_cloud_datsets'
-    dataset_name = 'ETRIGJHall'
-    project_name = 'Imageavgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3'
+    home_dir = '/home/yochin/Desktop/TableServiceDetector/MultiStreamDeformableDETR'
+    task_name = 'mains_cloud'
+    dataset_name = 'ETRIGJHall_Seq'
+    project_name = 'T10avgp_imageavgp_encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3_allTraining_EarlyStop_MultiGPUs'
+    checkpointname = 'checkpoint0054'
     cmd_args = [
-        '--resume', f'{home_dir}/{task_name}/exps/{dataset_name}/{project_name}/checkpoint.pth',
+        '--resume', f'{home_dir}/{task_name}/exps/{dataset_name}/{project_name}/{checkpointname}.pth',
         '--backbone', 'resnet50',
         '--class_list', f'{home_dir}/datasets/YMTestBed20class/YMTestBed20class_label.txt',
         '--sac_class_list', f'{home_dir}/datasets/ETRIGJHall/ETRIGJHall_label.txt',
@@ -697,13 +742,16 @@ if __name__ == '__main__':
 
         '--num_classes_on_G', '21',
         '--num_classes_on_H', '5',
-        '--saclassifier_type', 'imageavgp_pca1dlcnmsattnsimple',  # 'roiv2attnsimple', # 'roibased', #
+        '--saclassifier_type', 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimple',  # 'roiv2attnsimple', # 'roibased', #
+        '--num_prev_imgs', '9',
 
         # '--crop_ratio_ROI', '0.25', '0', '0.85', '1',
         # '--crop_ratio_ROI', '0.125', '0.5', '0.875', '1.0',
 
         # '--process_per_n_image', '10',
         # '--skip_first_n_image', '0',
+
+        '--processing_per_frames', '5',
 
         '--vis_th', '0.7',
         '--eval',
@@ -714,14 +762,29 @@ if __name__ == '__main__':
 
     args = parser.parse_args(cmd_args)
 
-    list_of_date = ['2022-09-19', '2022-09-21', '2022-09-26', '2022-10-05', '2022-10-07',
-                    '2022-10-12', '2022-10-14']  #
+    # # GJHall
+    # list_of_date = ['2022-09-19', '2022-09-21', '2022-09-26', '2022-10-05', '2022-10-07',
+    #                 '2022-10-12', '2022-10-14']  #
+    # for item in list_of_date:
+    #     imgs_dir = f'{home_dir}/data/ETRI_GJHall/{item}'
+    #     output_dir = f'./vis/{project_name}/{item}'
+    #     output_video = f'./vis/{project_name}/{item}.mp4'
+    #
+    #     main(args, imgs_dir=imgs_dir, output_dir=output_dir)
+    #
+    #     images_to_video(output_dir, output_video)
 
+    # GJHall_deploy
+    list_of_camera = ['captured1', 'captured3'] #
+    list_of_date = ['2023-01-18', '2023-01-19', '2023-01-26', '2023-01-27', '2023-01-30',
+                    '2023-01-31', '2023-02-01', '2023-02-03', '2023-02-06', '2023-02-07',
+                    '2023-02-09', '2023-02-10', '2023-02-14', '2023-02-15', '2023-02-16']  #
     for item in list_of_date:
-        imgs_dir = f'{home_dir}/data/ETRI_GJHall/{item}'
-        output_dir = f'./vis/{project_name}/{item}'
-        output_video = f'./vis/{project_name}/{item}.mp4'
+        for cam in list_of_camera:
+            imgs_dir = f'{home_dir}/data/ETRI_GJHallDeploy/JPEGImages/{cam}/{item}'
+            output_dir = f'./vis/{project_name}/wServiceManager/{cam}/{item}'
 
-        main(args, imgs_dir=imgs_dir, output_dir=output_dir)
+            main(args, imgs_dir=imgs_dir, output_dir=output_dir, cap_date=item)
 
-        images_to_video(output_dir, output_video)
+            # output_video = f'./vis/{project_name}/{cam}_{item}.mp4'
+            # images_to_video(output_dir, output_video)

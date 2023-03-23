@@ -3,16 +3,13 @@ from __future__ import division
 from __future__ import print_function
 
 # interface
-import pdb
 
 import requests
 import json
 from PIL import Image
 from io import BytesIO
-import numpy as np
 
 # model
-import _init_paths
 import os
 import argparse
 from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v6 import get_args_parser
@@ -28,6 +25,7 @@ from torchvision.ops import nms
 from MultiStreamDeformableDETR.engine_saclassifier import get_duration_norm
 from MultiStreamDeformableDETR.my_debug import draw_bboxes_on_pil
 from PIL import ImageDraw
+from MultiStreamDeformableDETR.mains_cloud.service_manager import ServiceManager
 
 
 class TableServiceAlarm:
@@ -150,9 +148,12 @@ class TableServiceAlarm:
         self.vis_th = 0.7
         self.args = args
 
+        self.service_manager = ServiceManager()
+
 
     def setStartTime(self, start_time_in_seconds):
         self.start_time_in_seconds = start_time_in_seconds
+        self.service_manager.set_start_time(start_time_in_seconds)
 
 
     def detect(self, ipl_img, current_time_in_seconds, draw_result=False):
@@ -164,7 +165,7 @@ class TableServiceAlarm:
 
             if duration_seconds < 0:
                 print('duration_seconds is less than zero!')
-                return None, None, None
+                return None, None, None, None
 
         t0 = time.time()
 
@@ -375,7 +376,10 @@ class TableServiceAlarm:
 
             print('processing time: ', time.time() - t0)
 
-            return detection_results, service_results, source_img
+            repr_service_name = self.service_manager.process(service_results,
+                                                             current_time_in_seconds)
+
+            return detection_results, service_results, repr_service_name, source_img
 
 
 class TableServiceAlarmRequestHandler(object):
@@ -393,9 +397,9 @@ class TableServiceAlarmRequestHandler(object):
         # - ex) result = [[100,100,200,200,154], [200,300,200,300,12]]
         # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
         # - ex) result = [0.7, 0.1, 0.1, 0.2]
-        detection_results, service_results, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
+        detection_results, service_results, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
-        return detection_results, service_results, vis_img
+        return detection_results, service_results, rep_service_name, vis_img
 
     def process_inference_request_imgurl(self, image_url, current_time_in_seconds):
         # 1. Read an url image and convert it to an ipl image
@@ -407,9 +411,9 @@ class TableServiceAlarmRequestHandler(object):
         # - ex) result = [(100,100,200,200,154), (200,300,200,300,12)]
         # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
         # - ex) result = [0.7, 0.1, 0.1, 0.2]
-        detection_results, service_results, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
+        detection_results, service_results, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
-        return detection_results, service_results, vis_img
+        return detection_results, service_results, rep_service_name, vis_img
 
 
 # one time test
@@ -425,9 +429,9 @@ if __name__ == '__main__':
     # 3. Give an image and get the results
     ipl_img = Image.open('example.jpg')  # read as rgb
     duration_time_in_sec = 300
-    detection_results, service_results, im2show = \
+    detection_results, service_results, rep_service_name, im2show = \
         handler.process_inference_request(ipl_img, duration_time_in_sec)        # request
-    # detection_results, service_results, im2show = \
+    # detection_results, service_results, rep_service_name, im2show = \
     #     handler.process_inference_request_imgurl(image_url, duration_time_in_sec)        # request
 
     # 4. Print the results
@@ -439,6 +443,9 @@ if __name__ == '__main__':
     print("Possible Service Results: ")
     for sac_name, result in zip(handler.sac_classes, service_results):
         print(f"  {sac_name}: {result:.4f}")
+
+    print('\n')
+    print('Representative Service: ', rep_service_name)
 
     # 5. Save the result image
     if im2show is not None:

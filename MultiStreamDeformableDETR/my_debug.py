@@ -164,3 +164,83 @@ def images_to_video(path_to_images, path_to_video, in_file_type = 'jpg', fps=15)
         out.write(img_array[i])
     out.release()
     print(f'{path_to_video} is generated')
+
+
+## time to second
+import time
+import datetime
+def hms_to_sec(hour, min, sec, msec=0.0):
+    return 3600*hour + 60*min + sec + 0.000001*msec
+
+def get_data_from_string(str_date):
+    year, month, day, hour, min, sec, msec = str_date.split('-')
+    cur_day = f'{year}-{month}-{day}'
+    cur_time = hms_to_sec(int(hour), int(min), int(sec), int(msec))
+
+    return cur_day, cur_time
+
+dict_start_time = {
+    '2022-09-19': hms_to_sec(11, 42, 38.012746),
+    '2022-09-21': hms_to_sec(11, 44, 07.009727),
+    '2022-09-26': hms_to_sec(11, 40, 18.005954),
+    '2022-09-28': hms_to_sec(11, 49, 42.019936),
+    '2022-09-30': hms_to_sec(11, 41, 59.065387),
+    '2022-10-05': hms_to_sec(11, 39, 39.056581),
+    '2022-10-07': hms_to_sec(11, 45, 25.064612),
+    '2022-10-12': hms_to_sec(11, 48, 38.198142),
+    '2022-10-14': hms_to_sec(11, 46, 37.161493),
+
+    '2023-01-18': hms_to_sec(11, 50, 07.181543),
+    '2023-01-19': hms_to_sec(12, 16, 41.160705),
+    '2023-01-26': hms_to_sec(12,  4, 31.184115),
+    '2023-01-27': hms_to_sec(11, 58, 29.002064),
+    '2023-01-30': hms_to_sec(12,  2, 12.033583),
+    '2023-01-31': hms_to_sec(11, 58, 01.118151),
+    '2023-02-01': hms_to_sec(12,  6, 46.185397),
+    '2023-02-03': hms_to_sec(11, 56, 19.099524),
+    '2023-02-06': hms_to_sec(11, 59,  3.284310),
+    '2023-02-07': hms_to_sec(12,  5, 40.321468),
+    '2023-02-09': hms_to_sec(11, 59, 10.230106),
+    '2023-02-10': hms_to_sec(12,  6, 45.175896),
+    '2023-02-14': hms_to_sec(11, 59, 49.195300),
+    '2023-02-15': hms_to_sec(11, 55, 33.299030),
+    '2023-02-16': hms_to_sec(12,  2, 22.222812)
+}
+
+def get_start_time_by_date(key_date):
+    return dict_start_time[key_date]
+
+def get_duration_using_startDate(str_date, start_date):
+    start_day, start_secs = get_data_from_string(start_date)
+    cur_day, cur_secs = get_data_from_string(str_date)
+
+    assert start_day == cur_day
+
+    duration_sec = cur_secs - start_secs
+    duration_norm = get_duration_norm(duration_sec)
+
+    return duration_norm
+
+def get_duration(str_date):
+    key, cur_time = get_data_from_string(str_date)
+    duration_norm, _ = get_duration_key_time(key, cur_time)
+
+    return duration_norm
+
+def get_duration_key_time(key, cur_time):
+    start_time = get_start_time_by_date(key)
+    duration_sec = cur_time - start_time
+    duration_norm = get_duration_norm(duration_sec)
+
+    return duration_norm, duration_sec
+
+
+def get_duration_norm(duration_seconds):
+    duration_norm = duration_seconds / (60 * 30)
+    if torch.is_tensor(duration_norm):
+        duration_norm = duration_norm.clone().detach()
+    else:
+        duration_norm = torch.tensor(duration_norm)
+    duration_norm = torch.clamp(duration_norm, 0.0, 1.0)
+
+    return duration_norm

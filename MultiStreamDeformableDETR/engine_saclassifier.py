@@ -28,6 +28,7 @@ import torch.nn.functional as F
 import numpy as np
 import util.misc as utils
 from util.misc import NestedTensor
+from my_debug import get_data_from_string, get_duration_key_time, get_duration, get_duration_norm
 
 def train_one_epoch_on_saclassifier(modelG: torch.nn.Module,
                                     modelH: torch.nn.Module,
@@ -280,18 +281,21 @@ class SACEvaluator(object):
 
     def summarize(self, ignore_auc=False):
         if utils.is_main_process():
-            from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
-                                         roc_auc_score, roc_curve)
+            from sklearn.metrics import (accuracy_score,
+                                         precision_score, recall_score, f1_score,
+                                         roc_auc_score, roc_curve,
+                                         average_precision_score)
 
             ys_prob = torch.sigmoid(torch.Tensor(self.predictions))
             ys_pred = ys_prob > self.thresh
             ys_true = self.groundtruths
 
-            list_acc = []
+            list_acc = []   # accuracy
             list_prec = []
             list_recl = []
-            list_f1 = []
-            list_auc = []
+            list_f1 = []    # f1 score
+            list_auc = []   # roc auc
+            list_prauc= []  # pr auc
             list_eer_fpr = []
             list_eer_fnr = []
             list_eer_th = []
@@ -302,19 +306,21 @@ class SACEvaluator(object):
                 y_pred = ys_pred[:, i_c]
                 y_true = ys_true[:, i_c]
 
-                list_acc.append(accuracy_score(y_true, y_pred))
+                list_acc.append(accuracy_score(y_true, y_pred))     # accuracy
                 list_prec.append(precision_score(y_true, y_pred))
                 list_recl.append(recall_score(y_true, y_pred))
-                list_f1.append(f1_score(y_true, y_pred))
+                list_f1.append(f1_score(y_true, y_pred))            # f1 score
 
                 if ignore_auc:
                     auc_score = 0
+                    prauc_score = 0
                     eer_score_fpr = 0
                     eer_score_fnr = 0
                     eer_threshold = -1
                 else:
                     try:
-                        auc_score = roc_auc_score(y_true, y_prob)
+                        auc_score = roc_auc_score(y_true, y_prob)   # roc auc
+                        prauc_score = average_precision_score(y_true, y_prob)   # pr auc
 
                         fpr, tpr, threshold = roc_curve(y_true, y_prob, pos_label=1)
                         fnr = 1 - tpr
@@ -323,10 +329,12 @@ class SACEvaluator(object):
                         eer_score_fnr = fnr[np.nanargmin(np.absolute((fnr - fpr)))]
                     except ValueError:
                         auc_score = 0
+                        prauc_score = 0
                         eer_score_fpr = 0
                         eer_score_fnr = 0
                         eer_threshold = -1
                 list_auc.append(auc_score)
+                list_prauc.append(prauc_score)
                 list_eer_fpr.append(float(eer_score_fpr))
                 list_eer_fnr.append(float(eer_score_fnr))
                 list_eer_th.append(float(eer_threshold))
@@ -335,6 +343,7 @@ class SACEvaluator(object):
                 'sacs_acc': list_acc,
                 'sacs_f1score': list_f1,
                 'sacs_auc': list_auc,
+                'sacs_prauc': list_prauc,
                 'sacs_eer_fpr': list_eer_fpr,
                 'sacs_eer_fnr': list_eer_fnr,
                 'sacs_eer_th': list_eer_th,
@@ -360,54 +369,6 @@ class SACEvaluator(object):
     #
     #         return acc.tolist()
     #     return None
-
-import time
-import datetime
-
-def hms_to_sec(hour, min, sec, msec=0.0):
-    return 3600*hour + 60*min + sec + 0.000001*msec
-def get_data_from_string(str_date):
-    year, month, day, hour, min, sec, msec = str_date.split('-')
-    cur_day = f'{year}-{month}-{day}'
-    cur_time = hms_to_sec(int(hour), int(min), int(sec), int(msec))
-
-    return cur_day, cur_time
-
-dict_start_time = {
-    '2022-09-19': hms_to_sec(11, 42, 38.012746),
-    '2022-09-21': hms_to_sec(11, 44, 07.009727),
-    '2022-09-26': hms_to_sec(11, 40, 18.005954),
-    '2022-09-28': hms_to_sec(11, 49, 42.019936),
-    '2022-09-30': hms_to_sec(11, 41, 59.065387),
-    '2022-10-05': hms_to_sec(11, 39, 39.056581),
-    '2022-10-07': hms_to_sec(11, 45, 25.064612),
-    '2022-10-12': hms_to_sec(11, 48, 38.198142),
-    '2022-10-14': hms_to_sec(11, 46, 37.161493),
-}
-
-
-def get_duration(str_date):
-    key, cur_time = get_data_from_string(str_date)
-    duration_norm = get_duration_key_time(key, cur_time)
-
-    return duration_norm
-
-
-def get_duration_key_time(key, cur_time):
-    start_time = dict_start_time[key]
-    duration_sec = cur_time - start_time
-    duration_norm = get_duration_norm(duration_sec)
-
-    return duration_norm
-
-
-def get_duration_norm(duration_seconds):
-    duration_norm = duration_seconds / (60 * 30)
-    duration_norm = torch.tensor(duration_norm)
-    duration_norm = torch.clamp(duration_norm, 0.0, 1.0)
-
-    return duration_norm
-
 
 def train_one_epoch_on_saclassifier_wDETR(
         modelG: torch.nn.Module, modelH: torch.nn.Module,
@@ -440,20 +401,39 @@ def train_one_epoch_on_saclassifier_wDETR(
         if isinstance(samples, list):
             service_pred_logits = []
             for i_s, item in enumerate(samples):
-                outputsG = modelG(item)
 
-                x_duration = []
-                filename = dataset_id_to_filename(targets[i_s]['image_id'].item())[0]['file_name']
-                str_date = filename.split('.')[0].split('_')[1]
-                key, cur_time = get_data_from_string(str_date)
-                num_prev = item.tensors.shape[0]
-                for i_p in range(-num_prev+1, 1):
-                    duration_norm = get_duration_key_time(key, cur_time+i_p)
-                    x_duration.append(duration_norm)
-                x_duration = torch.stack(x_duration, dim=0)
-                x_duration = x_duration.unsqueeze(dim=1)
-                x_duration = x_duration.cuda()
-                outputsG['duration'] = x_duration
+                if frozen_modelG:
+                    with torch.no_grad():
+                        outputsG = modelG(item)
+                else:
+                    outputsG = modelG(item)
+
+                # # get the duration from filename
+                # x_duration = []
+                # filename = dataset_id_to_filename(targets[i_s]['image_id'].item())[0]['file_name']
+                # str_date = filename.split('.')[0].split('_')[1]
+                # key, cur_time = get_data_from_string(str_date)
+                # num_prev = item.tensors.shape[0]
+                # for i_p in range(-num_prev+1, 1):
+                #     duration_norm, _ = get_duration_key_time(key, cur_time+i_p)     # cur_time (sec.msec) + (-sec)
+                #     x_duration.append(duration_norm)
+                #
+                # x_duration = torch.stack(x_duration, dim=0)
+                # x_duration = x_duration.unsqueeze(dim=1)
+                # x_duration = x_duration.cuda()
+                # print('x_duration: ', x_duration)
+
+                # get the duration from target
+                # not normalized, just a second
+                x_duration_t = targets[i_s]['duration_sec']  # n_b, n_T
+                x_duration_t = x_duration_t.squeeze(dim=0)  # n_T
+                x_duration_t = x_duration_t.unsqueeze(dim=1)
+                x_duration_t = get_duration_norm(x_duration_t)
+
+                # print('x_duration_t: ', x_duration_t)
+                # pdb.set_trace()
+
+                outputsG['duration'] = x_duration_t
 
                 outputsH = modelH(outputsG)
                 service_pred_logits.append(outputsH['service_pred_logits'])
@@ -461,18 +441,30 @@ def train_one_epoch_on_saclassifier_wDETR(
         else:
             outputsG = modelG(samples)
             if dataset_id_to_filename is not None:
-                # dataset_train.coco.loadImgs(self.ids[idx])[0]['file_name']
-                x_duration = []
+                # # get the duration from filename
+                # x_duration = []
+                # for item in targets:
+                #     filename = dataset_id_to_filename(item['image_id'].item())[0]['file_name']
+                #     str_date = filename.split('.')[0].split('_')[1]
+                #     duration_norm = get_duration(str_date)
+                #     x_duration.append(duration_norm)
+                # x_duration = torch.stack(x_duration, dim=0)
+                # x_duration = x_duration.unsqueeze(dim=1)
+                # x_duration = x_duration.cuda()
+                # print('x_duration: ', x_duration)
+
+                # get the duration from target
+                # not normalized, just a second
+                x_duration_t = []
                 for item in targets:
-                    filename = dataset_id_to_filename(item['image_id'].item())[0]['file_name']
-                    # print(filename)
-                    str_date = filename.split('.')[0].split('_')[1]
-                    duration_norm = get_duration(str_date)
-                    x_duration.append(duration_norm)
-                x_duration = torch.stack(x_duration, dim=0)
-                x_duration = x_duration.unsqueeze(dim=1)
-                x_duration = x_duration.cuda()
-                outputsG['duration'] = x_duration
+                    x_duration_t.append(item['duration_sec'])  # 1, 1
+                x_duration_t = torch.cat(x_duration_t, dim=0)  # n_b, 1
+                x_duration_t = get_duration_norm(x_duration_t)
+
+                # print('x_duration_t: ', x_duration_t)
+                # pdb.set_trace()
+
+                outputsG['duration'] = x_duration_t
                 # add also in evaluate
             outputsH = modelH(outputsG)
 
@@ -579,223 +571,547 @@ def train_one_epoch_on_saclassifier_wDETR(
 
 
 @torch.no_grad()
-def evaluate_on_saclassifier_wDETR(modelG, modelH, criterionG, criterionH, postprocessors, data_loader, base_ds, device, output_dir,
+def evaluate_on_saclassifier_wDETR(modelG, modelH, criterionG, criterionH, postprocessors,
+                                   data_loader, base_ds, device, output_dir,
                                    save_result_image=False, num_saved_results=0, vis_th=0.5,
                                    num_classes=5, dataset_id_to_filename=None):
-    # get all evaluation results
-    modelG.eval()
-    modelH.eval()
-    criterionG.eval()
-    criterionH.eval()
+    with torch.no_grad():
+        # get all evaluation results
+        modelG.eval()
+        modelH.eval()
+        criterionG.eval()
+        criterionH.eval()
 
-    # postprocessors convert bbox type and scale
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-    header = 'Test:'
+        # postprocessors convert bbox type and scale
+        metric_logger = utils.MetricLogger(delimiter="  ")
+        metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+        header = 'Test:'
 
-    sac_evaluator = SACEvaluator(num_classes)
+        sac_evaluator = SACEvaluator(num_classes)
 
-    coco_evaluator = None
-    if 'bbox' in postprocessors.keys():
-        iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
-        coco_evaluator = CocoEvaluator(base_ds, iou_types)
-        # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
-
-    if save_result_image:
-        path_to_result_images = os.path.join(output_dir, 'vis')
-        if not os.path.exists(path_to_result_images):
-            os.makedirs(path_to_result_images)
-
-    count_samples = 0
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
-        # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]  # this can be multiple.
-        targets = [{k: v.to(device) for k, v in t.items() if k != 'file_name'} for t in
-                   targets]  # this can be multiple.
-
-        # targets_filename = [t['file_name'] for t in targets]
-        if isinstance(samples, list):
-            service_pred_logits = []
-            outputsG_pred_logits = []
-            outputsG_pred_boxes = []
-            outputsG_amount_score = []
-            outputsG_progress_score = []
-            for i_s, item in enumerate(samples):
-                item = item.to(device)
-                outputsG = modelG(item)
-
-                x_duration = []
-                filename = dataset_id_to_filename(targets[i_s]['image_id'].item())[0]['file_name']
-                str_date = filename.split('.')[0].split('_')[1]
-                key, cur_time = get_data_from_string(str_date)
-                num_prev = item.tensors.shape[0]
-                for i_p in range(-num_prev + 1, 1):
-                    duration_norm = get_duration_key_time(key, cur_time + i_p)
-                    x_duration.append(duration_norm)
-                x_duration = torch.stack(x_duration, dim=0)
-                x_duration = x_duration.unsqueeze(dim=1)
-                x_duration = x_duration.cuda()
-                outputsG['duration'] = x_duration
-
-                outputsH = modelH(outputsG)
-
-                service_pred_logits.append(outputsH['service_pred_logits'])
-
-                outputsG_pred_logits.append(outputsG['pred_logits'][-1:, :, :])
-                outputsG_pred_boxes.append(outputsG['pred_boxes'][-1:, :, :])
-                outputsG_amount_score.append(outputsG['amount_score'][-1:, :, :])
-                outputsG_progress_score.append(outputsG['progress_score'][-1:, :])
-
-            outputsH['service_pred_logits'] = torch.cat(service_pred_logits, dim=0)
-
-            outputsG['pred_logits'] = torch.cat(outputsG_pred_logits, dim=0)
-            outputsG['pred_boxes'] = torch.cat(outputsG_pred_boxes, dim=0)
-            outputsG['amount_score'] = torch.cat(outputsG_amount_score, dim=0)
-            outputsG['progress_score'] = torch.cat(outputsG_progress_score, dim=0)
-
-            loss_dictH = criterionH(outputsH, targets)  # just loss for training
-            loss_dict = loss_dictH  # */iterable, **/dict unpacking operator
-            weight_dict = criterionH.weight_dict
-        else:
-            samples = samples.to(device)
-            outputsG = modelG(samples)
-            if dataset_id_to_filename is not None:
-                # dataset_train.coco.loadImgs(self.ids[idx])[0]['file_name']
-                x_duration = []
-                for item in targets:
-                    filename = dataset_id_to_filename(item['image_id'].item())[0]['file_name']
-                    str_date = filename.split('.')[0].split('_')[1]
-                    duration_norm = get_duration(str_date)
-                    x_duration.append(duration_norm)
-                x_duration = torch.stack(x_duration, dim=0)
-                x_duration = x_duration.unsqueeze(dim=1)
-                x_duration = x_duration.cuda()
-                outputsG['duration'] = x_duration
-                # add also in evaluate
-            outputsH = modelH(outputsG)
-
-            loss_dictG = criterionG(outputsG, targets)
-            loss_dictH = criterionH(outputsH, targets) # just loss for training
-
-            loss_dict = {**loss_dictH, **loss_dictG}
-            weight_dict = {**criterionH.weight_dict, **criterionG.weight_dict}
-
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
-        metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
-                             **loss_dict_reduced_scaled,
-                             **loss_dict_reduced_unscaled)
-        metric_logger.update(class_error=loss_dict_reduced['class_error'])
-
-        if coco_evaluator is not None:
-            orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-            results = postprocessors['bbox'](outputsG, orig_target_sizes)
-
-            res = {target['image_id'].item(): output for target, output in
-                   zip(targets, results)}
-            # res: dict ('image_id') of dict ('scores', 'labels', 'boxes', )
-
-            coco_evaluator.update(res)
-
-        if sac_evaluator is not None:
-            outputs_for_saclass = outputsH['service_pred_logits']     # n_batch, n_class
-            if len(outputs_for_saclass.shape) == 3:
-                outputs_for_saclass = torch.squeeze(outputs_for_saclass, dim=2)
-            sac_evaluator.update(outputs_for_saclass, targets)  # insert score(logit), not prob
-
-            # sac_evaluator.predictions
-            # sac_evaluator.groundtruths
-            # sac_evaluator.summarize()
+        coco_evaluator = None
+        if 'bbox' in postprocessors.keys():
+            iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
+            coco_evaluator = CocoEvaluator(base_ds, iou_types)
+            # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
         if save_result_image:
-            for i, target in enumerate(targets):    # per batch
-                count_samples += 1
-                if count_samples <= num_saved_results:
-                    image_id = target["image_id"].item()
-                    file_name = f"{image_id:012d}.jpg"
-                    # file_name = targets_filename[i]
-                    save_file_name = os.path.join(path_to_result_images, file_name)
+            path_to_result_images = os.path.join(output_dir, 'vis')
+            if not os.path.exists(path_to_result_images):
+                os.makedirs(path_to_result_images)
 
-                    draw_image = samples.tensors[i].detach().cpu()
-                    draw_mask = samples.mask[i].detach().cpu()
+        count_samples = 0
+        for samples, targets in metric_logger.log_every(data_loader, 10, header):
+            # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]  # this can be multiple.
+            targets = [{k: v.to(device) for k, v in t.items() if k != 'file_name'} for t in
+                       targets]  # this can be multiple.
 
-                    if coco_evaluator is not None:
-                        scaled_boxes = res[image_id]['boxes'].detach().cpu()  # n_box, 4
-                        res_labels = res[image_id]['labels'].detach().cpu()
-                        res_scores = res[image_id]['scores'].detach().cpu()
-                    else:
-                        scaled_boxes = res_labels = res_scores = None
+            # targets_filename = [t['file_name'] for t in targets]
+            if isinstance(samples, list):
+                service_pred_logits = []
+                outputsG_pred_logits = []
+                outputsG_pred_boxes = []
+                outputsG_amount_score = []
+                outputsG_progress_score = []
+                for i_s, item in enumerate(samples):
+                    item = item.to(device)
+                    outputsG = modelG(item)
 
-                    masked_image, unscaled_boxes = convert_sample_and_boxes(draw_image, draw_mask,
-                                                                            scaled_boxes)
+                    # # get the duration from filename
+                    # x_duration = []
+                    # filename = dataset_id_to_filename(targets[i_s]['image_id'].item())[0]['file_name']
+                    # str_date = filename.split('.')[0].split('_')[1]
+                    # key, cur_time = get_data_from_string(str_date)
+                    # num_prev = item.tensors.shape[0]
+                    #
+                    # for i_p in range(-num_prev + 1, 1):
+                    #     duration_norm, _ = get_duration_key_time(key, cur_time + i_p)
+                    #     x_duration.append(duration_norm)
+                    #
+                    # x_duration = torch.stack(x_duration, dim=0) # n_T
+                    # x_duration = x_duration.unsqueeze(dim=1)    # n_T, 1
+                    # x_duration = x_duration.cuda()
+                    # print('x_duration: ', x_duration)
 
-                    pil_image = tensor_to_pil(masked_image,
-                                              orig_size=(targets[i]['orig_size'][1].item(),
-                                                         targets[i]['orig_size'][0].item()))
-                    if coco_evaluator is not None:
-                        # draw bboxes
+                    # get the duration from target
+                    # not normalized, just a second
+                    x_duration_t = targets[i_s]['duration_sec']     # n_b, n_T
+                    x_duration_t = x_duration_t.squeeze(dim=0)      # n_T
+                    x_duration_t = x_duration_t.unsqueeze(dim=1)
+                    x_duration_t = get_duration_norm(x_duration_t)
+                    # print('x_duration_t: ', x_duration_t)
+
+                    outputsG['duration'] = x_duration_t
+
+                    outputsH = modelH(outputsG)
+
+                    service_pred_logits.append(outputsH['service_pred_logits'])
+
+                    outputsG_pred_logits.append(outputsG['pred_logits'][-1:, :, :])
+                    outputsG_pred_boxes.append(outputsG['pred_boxes'][-1:, :, :])
+                    outputsG_amount_score.append(outputsG['amount_score'][-1:, :, :])
+                    outputsG_progress_score.append(outputsG['progress_score'][-1:, :])
+
+                outputsH['service_pred_logits'] = torch.cat(service_pred_logits, dim=0)
+
+                outputsG['pred_logits'] = torch.cat(outputsG_pred_logits, dim=0)
+                outputsG['pred_boxes'] = torch.cat(outputsG_pred_boxes, dim=0)
+                outputsG['amount_score'] = torch.cat(outputsG_amount_score, dim=0)
+                outputsG['progress_score'] = torch.cat(outputsG_progress_score, dim=0)
+
+                loss_dictH = criterionH(outputsH, targets)  # just loss for training
+                loss_dict = loss_dictH  # */iterable, **/dict unpacking operator
+                weight_dict = criterionH.weight_dict
+            else:
+                samples = samples.to(device)
+                outputsG = modelG(samples)
+                if dataset_id_to_filename is not None:
+                    # # get the duration from filename
+                    # x_duration = []
+                    # for item in targets:
+                    #     filename = dataset_id_to_filename(item['image_id'].item())[0]['file_name']
+                    #     str_date = filename.split('.')[0].split('_')[1]
+                    #     duration_norm = get_duration(str_date)
+                    #     x_duration.append(duration_norm)
+                    # x_duration = torch.stack(x_duration, dim=0) # n_b
+                    # x_duration = x_duration.unsqueeze(dim=1)    # n_b, 1
+                    # x_duration = x_duration.cuda()
+                    # print('x_duration: ', x_duration)
+
+                    # get the duration from target
+                    # not normalized, just a second
+                    x_duration_t = []
+                    for item in targets:
+                        x_duration_t.append(item['duration_sec']) # 1, 1
+                    x_duration_t = torch.cat(x_duration_t, dim=0)   # n_b, 1
+                    x_duration_t = get_duration_norm(x_duration_t)
+                    # print('x_duration_t: ', x_duration_t)
+                    # pdb.set_trace()
+
+                    outputsG['duration'] = x_duration_t
+                    # add also in evaluate
+                outputsH = modelH(outputsG)
+
+                loss_dictG = criterionG(outputsG, targets)
+                loss_dictH = criterionH(outputsH, targets) # just loss for training
+
+                loss_dict = {**loss_dictH, **loss_dictG}
+                weight_dict = {**criterionH.weight_dict, **criterionG.weight_dict}
+
+            # reduce losses over all GPUs for logging purposes
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                        for k, v in loss_dict_reduced.items() if k in weight_dict}
+            loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                          for k, v in loss_dict_reduced.items()}
+            metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
+                                 **loss_dict_reduced_scaled,
+                                 **loss_dict_reduced_unscaled)
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
+
+            if coco_evaluator is not None:
+                orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+                results = postprocessors['bbox'](outputsG, orig_target_sizes)
+
+                res = {target['image_id'].item(): output for target, output in
+                       zip(targets, results)}
+                # res: dict ('image_id') of dict ('scores', 'labels', 'boxes', )
+
+                coco_evaluator.update(res)
+
+            if sac_evaluator is not None:
+                outputs_for_saclass = outputsH['service_pred_logits']     # n_batch, n_class
+                if len(outputs_for_saclass.shape) == 3:
+                    outputs_for_saclass = torch.squeeze(outputs_for_saclass, dim=2)
+
+                sac_evaluator.update(outputs_for_saclass, targets)  # insert score(logit), not prob
+
+                # sac_evaluator.predictions
+                # sac_evaluator.groundtruths
+                # sac_evaluator.summarize()
+
+            if save_result_image:
+                for i, target in enumerate(targets):    # per batch
+                    count_samples += 1
+                    if count_samples <= num_saved_results:
+                        image_id = target["image_id"].item()
+                        file_name = f"{image_id:012d}.jpg"
+                        # file_name = targets_filename[i]
+                        save_file_name = os.path.join(path_to_result_images, file_name)
+
+                        if isinstance(samples, list):
+                            pdb.set_trace() # check -1 or 0, the key_frame
+                            draw_image = samples[-1].tensors[i].detach().cpu()
+                            draw_mask = samples[-1].mask[i].detach().cpu()
+
+                            for key_weights in ['pca_weights_bbox', 'pca_weights_amount',
+                                                'backbone_weights',
+                                                'hs_output_weights', 'enc_output_weights']:
+                                if outputsH[key_weights] is not None:
+                                    outputsH[key_weights] = outputsH[key_weights][0:1, :, :]
+                        else:
+                            draw_image = samples.tensors[i].detach().cpu()
+                            draw_mask = samples.mask[i].detach().cpu()
+
+                        if coco_evaluator is not None:
+                            scaled_boxes = res[image_id]['boxes'].detach().cpu()  # n_box, 4
+                            res_labels = res[image_id]['labels'].detach().cpu()
+                            res_scores = res[image_id]['scores'].detach().cpu()
+                        else:
+                            scaled_boxes = res_labels = res_scores = None
+
+                        masked_image, unscaled_boxes = convert_sample_and_boxes(draw_image, draw_mask,
+                                                                                scaled_boxes)
+
+                        pil_image = tensor_to_pil(masked_image,
+                                                  orig_size=(targets[i]['orig_size'][1].item(),
+                                                             targets[i]['orig_size'][0].item()))
+                        if coco_evaluator is not None:
+                            # draw bboxes
+                            pil_image = draw_bboxes_on_pil(pil_image, unscaled_boxes, res_labels,
+                                                           scores=res_scores,
+                                                           vis_th=vis_th)
+
+                        if 'bbox_attn' in postprocessors.keys():
+                            resultsG, resultsH = postprocessors['bbox_attn'](outputsG, outputsH, orig_target_sizes)
+
+                            # resultsH['hs_attn_values']  # n_b or n_T, n_class-1, topk(3)
+                            # resultsH['hs_attn_bbox']    # n_b or n_T, n_class-1, topk(3), 4
+
+                            res_hs = {target['image_id'].item(): {'boxes': hs_bbox, 'scores': hs_scores} for target, hs_scores, hs_bbox in zip(targets, resultsH['hs_attn_values'], resultsH['hs_attn_bbox'])}
+                            res_boxes_hs = res_hs[image_id]['boxes']
+                            res_scores_hs = res_hs[image_id]['scores']
+
+                            for i_c in range(res_boxes_hs.shape[0]):
+                                pil_image = draw_bboxes_on_pil(pil_image, res_boxes_hs[i_c, :, :], [i_c] * 100,
+                                                               scores=res_scores_hs[i_c, :],
+                                                               vis_th=0.01)
+
+                        # draw saclass predictions
+                        unscaled_boxes = torch.tensor([[1, 1, 10, 10], [1, 21, 10, 30],
+                                                       [1, 41, 10, 50], [1, 61, 10, 70]])
+                        res_labels = ['refill', 'trash', 'dessert', 'lost']
+                        saclass_logits = outputsH['service_pred_logits']
+                        res_scores = torch.sigmoid(saclass_logits)[0, 1:].detach().cpu()
+                        vis_th = 0.0
                         pil_image = draw_bboxes_on_pil(pil_image, unscaled_boxes, res_labels,
                                                        scores=res_scores,
                                                        vis_th=vis_th)
 
-                    if 'bbox_attn' in postprocessors.keys():
-                        resultsG, resultsH = postprocessors['bbox_attn'](outputsG, outputsH, orig_target_sizes)
-
-                        # resultsH['hs_attn_values']  # n_b, n_class-1, topk(3)
-                        # resultsH['hs_attn_bbox']    # n_b, n_class-1, topk(3), 4
-
-                        res_hs = {target['image_id'].item(): {'boxes': hs_bbox, 'scores': hs_scores} for target, hs_scores, hs_bbox in zip(targets, resultsH['hs_attn_values'], resultsH['hs_attn_bbox'])}
-                        res_boxes_hs = res_hs[image_id]['boxes']
-                        res_scores_hs = res_hs[image_id]['scores']
-
-                        pdb.set_trace()
-
-                        for i_c in range(res_boxes_hs.shape[0]):
-                            pil_image = draw_bboxes_on_pil(pil_image, res_boxes_hs[i_c, :, :], [i_c] * 100,
-                                                           scores=res_scores_hs[i_c, :],
-                                                           vis_th=0.01)
-
-                    # draw saclass predictions
-                    unscaled_boxes = torch.tensor([[1, 1, 10, 10], [1, 21, 10, 30],
-                                                   [1, 41, 10, 50], [1, 61, 10, 70]])
-                    res_labels = ['refill', 'trash', 'dessert', 'lost']
-                    saclass_logits = outputsH['service_pred_logits']
-                    res_scores = torch.sigmoid(saclass_logits)[0, 1:].detach().cpu()
-                    vis_th = 0.0
-                    pil_image = draw_bboxes_on_pil(pil_image, unscaled_boxes, res_labels,
-                                                   scores=res_scores,
-                                                   vis_th=vis_th)
-
-                    pil_image.save(save_file_name, 'JPEG')
+                        pil_image.save(save_file_name, 'JPEG')
 
 
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
+        # gather the stats from all processes
+        metric_logger.synchronize_between_processes()
+        print("Averaged stats:", metric_logger)
+        if coco_evaluator is not None:
+            coco_evaluator.synchronize_between_processes()
 
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
+        # accumulate predictions from all images
+        if coco_evaluator is not None:
+            coco_evaluator.accumulate()
+            coco_evaluator.summarize()
 
-    sac_res = None
-    if sac_evaluator is not None:
-        sac_res = sac_evaluator.summarize()
-        print(sac_res)
-        # sac_evaluator.predictions
+        sac_res = None
+        if sac_evaluator is not None:
+            sac_res = sac_evaluator.summarize()
+            print(sac_res)
+            # sac_evaluator.predictions
 
-    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
+        stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        if coco_evaluator is not None:
+            if 'bbox' in postprocessors.keys():
+                stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+            if 'segm' in postprocessors.keys():
+                stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+        if sac_res is not None:
+            stats.update(sac_res)
+
+    return stats, coco_evaluator
+
+
+
+@torch.no_grad()
+def evaluate_on_saclassifier_wDETR_multiInput(modelG, modelH, criterionG, criterionH, postprocessors,
+                                   data_loader, data_loader2, base_ds, device, output_dir,
+                                   save_result_image=False, num_saved_results=0, vis_th=0.5,
+                                   num_classes=5, dataset_id_to_filename=None, dataset_id_to_filename2=None):
+    with torch.no_grad():
+        # get all evaluation results
+        modelG.eval()
+        modelH.eval()
+        criterionG.eval()
+        criterionH.eval()
+
+        # postprocessors convert bbox type and scale
+        metric_logger = utils.MetricLogger(delimiter="  ")
+        metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+        header = 'Test:'
+
+        sac_evaluator = SACEvaluator(num_classes)
+
+        coco_evaluator = None
         if 'bbox' in postprocessors.keys():
-            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        if 'segm' in postprocessors.keys():
-            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
-    if sac_res is not None:
-        stats.update(sac_res)
+            iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
+            coco_evaluator = CocoEvaluator(base_ds, iou_types)
+            # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
+
+        if save_result_image:
+            path_to_result_images = os.path.join(output_dir, 'vis')
+            if not os.path.exists(path_to_result_images):
+                os.makedirs(path_to_result_images)
+
+
+
+
+        prefetcher = data_prefetcher(data_loader, device, prefetch=True)
+        samples, targets = prefetcher.next()
+
+        prefetcher2 = data_prefetcher(data_loader2, device, prefetch=True)
+        samples2, targets2 = prefetcher2.next()
+
+        count_samples = 0
+        for i_batch in metric_logger.log_every(range(len(data_loader)), 10, header):
+            # targets = [{k: v.to(device) for k, v in t.items()} for t in targets]  # this can be multiple.
+            targets = [{k: v.to(device) for k, v in t.items() if k != 'file_name'} for t in targets]  # this can be multiple.
+            targets2 = [{k: v.to(device) for k, v in t.items() if k != 'file_name'} for t in targets2]  # this can be multiple.
+
+            filename = dataset_id_to_filename(targets[0]['image_id'].item())[0]['file_name']
+            filename2 = dataset_id_to_filename2(targets2[0]['image_id'].item())[0]['file_name']
+
+            assert filename.replace('captured1', 'captured2') == filename2
+
+            # merge netested tensor
+            #samples = samples1 + samples2
+            # .tensors, .mask
+            if isinstance(samples, list):
+                for i_s in range(len(samples)):
+                    samples[i_s].tensors = torch.cat([samples[i_s].tensors, samples2[i_s].tensors], dim=3)
+                    samples[i_s].mask = torch.cat([samples[i_s].mask, samples2[i_s].mask], dim=2)
+            else:
+                samples.tensors = torch.cat([samples.tensors, samples2.tensors], dim=3)
+                samples.mask = torch.cat([samples.mask, samples2.mask], dim=2)
+
+            if isinstance(samples, list):
+                service_pred_logits = []
+                outputsG_pred_logits = []
+                outputsG_pred_boxes = []
+                outputsG_amount_score = []
+                outputsG_progress_score = []
+                for i_s, item in enumerate(samples):
+                    item = item.to(device)
+                    outputsG = modelG(item)
+                    
+                    # # get the duration from filename
+                    # x_duration = []
+                    # filename = dataset_id_to_filename(targets[i_s]['image_id'].item())[0]['file_name']
+                    # str_date = filename.split('.')[0].split('_')[1]
+                    # key, cur_time = get_data_from_string(str_date)
+                    # num_prev = item.tensors.shape[0]
+                    #
+                    # for i_p in range(-num_prev + 1, 1):
+                    #     duration_norm, _ = get_duration_key_time(key, cur_time + i_p)
+                    #     x_duration.append(duration_norm)
+                    #
+                    # x_duration = torch.stack(x_duration, dim=0) # n_T
+                    # x_duration = x_duration.unsqueeze(dim=1)    # n_T, 1
+                    # x_duration = x_duration.cuda()
+                    # print('x_duration: ', x_duration)
+
+                    # get the duration from target
+                    # not normalized, just a second
+                    x_duration_t = targets[i_s]['duration_sec']     # n_b, n_T
+                    x_duration_t = x_duration_t.squeeze(dim=0)      # n_T
+                    x_duration_t = x_duration_t.unsqueeze(dim=1)    # n_T, 1
+                    x_duration_t = get_duration_norm(x_duration_t)
+                    # print('x_duration_t: ', x_duration_t)
+
+                    outputsG['duration'] = x_duration_t
+
+                    outputsH = modelH(outputsG)
+
+                    service_pred_logits.append(outputsH['service_pred_logits'])
+
+                    outputsG_pred_logits.append(outputsG['pred_logits'][-1:, :, :])
+                    outputsG_pred_boxes.append(outputsG['pred_boxes'][-1:, :, :])
+                    outputsG_amount_score.append(outputsG['amount_score'][-1:, :, :])
+                    outputsG_progress_score.append(outputsG['progress_score'][-1:, :])
+
+                outputsH['service_pred_logits'] = torch.cat(service_pred_logits, dim=0)
+
+                outputsG['pred_logits'] = torch.cat(outputsG_pred_logits, dim=0)
+                outputsG['pred_boxes'] = torch.cat(outputsG_pred_boxes, dim=0)
+                outputsG['amount_score'] = torch.cat(outputsG_amount_score, dim=0)
+                outputsG['progress_score'] = torch.cat(outputsG_progress_score, dim=0)
+
+                loss_dictH = criterionH(outputsH, targets)  # just loss for training
+                loss_dict = loss_dictH  # */iterable, **/dict unpacking operator
+                weight_dict = criterionH.weight_dict
+            else:
+                samples = samples.to(device)
+                outputsG = modelG(samples)
+                if dataset_id_to_filename is not None:
+                    # # get the duration from filename
+                    # x_duration = []
+                    # for item in targets:
+                    #     filename = dataset_id_to_filename(item['image_id'].item())[0]['file_name']
+                    #     str_date = filename.split('.')[0].split('_')[1]
+                    #     duration_norm = get_duration(str_date)
+                    #     x_duration.append(duration_norm)
+                    # x_duration = torch.stack(x_duration, dim=0) # n_b
+                    # x_duration = x_duration.unsqueeze(dim=1)    # n_b, 1
+                    # x_duration = x_duration.cuda()
+                    # print('x_duration: ', x_duration)
+
+                    # get the duration from target
+                    # not normalized, just a second
+                    x_duration_t = []
+                    for item in targets:
+                        x_duration_t.append(item['duration_sec']) # 1, 1
+                    x_duration_t = torch.cat(x_duration_t, dim=0)   # n_b, 1
+                    x_duration_t = get_duration_norm(x_duration_t)
+                    # print('x_duration_t: ', x_duration_t)
+                    # pdb.set_trace()
+
+                    outputsG['duration'] = x_duration_t
+                    # add also in evaluate
+                outputsH = modelH(outputsG)
+
+                loss_dictG = criterionG(outputsG, targets)
+                loss_dictH = criterionH(outputsH, targets) # just loss for training
+
+                loss_dict = {**loss_dictH, **loss_dictG}
+                weight_dict = {**criterionH.weight_dict, **criterionG.weight_dict}
+
+            # reduce losses over all GPUs for logging purposes
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                        for k, v in loss_dict_reduced.items() if k in weight_dict}
+            loss_dict_reduced_unscaled = {f'{k}_unscaled': v
+                                          for k, v in loss_dict_reduced.items()}
+            metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
+                                 **loss_dict_reduced_scaled,
+                                 **loss_dict_reduced_unscaled)
+            metric_logger.update(class_error=loss_dict_reduced['class_error'])
+
+            if coco_evaluator is not None:
+                orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
+                results = postprocessors['bbox'](outputsG, orig_target_sizes)
+
+                res = {target['image_id'].item(): output for target, output in
+                       zip(targets, results)}
+                # res: dict ('image_id') of dict ('scores', 'labels', 'boxes', )
+
+                coco_evaluator.update(res)
+
+            if sac_evaluator is not None:
+                outputs_for_saclass = outputsH['service_pred_logits']     # n_batch, n_class
+                if len(outputs_for_saclass.shape) == 3:
+                    outputs_for_saclass = torch.squeeze(outputs_for_saclass, dim=2)
+
+                sac_evaluator.update(outputs_for_saclass, targets)  # insert score(logit), not prob
+
+                # sac_evaluator.predictions
+                # sac_evaluator.groundtruths
+                # sac_evaluator.summarize()
+
+            if save_result_image:
+                for i, target in enumerate(targets):    # per batch
+                    count_samples += 1
+                    if count_samples <= num_saved_results:
+                        image_id = target["image_id"].item()
+                        file_name = f"{image_id:012d}.jpg"
+                        # file_name = targets_filename[i]
+                        save_file_name = os.path.join(path_to_result_images, file_name)
+
+                        if isinstance(samples, list):
+                            pdb.set_trace() # check -1 or 0, the key_frame
+                            draw_image = samples[-1].tensors[i].detach().cpu()
+                            draw_mask = samples[-1].mask[i].detach().cpu()
+
+                            for key_weights in ['pca_weights_bbox', 'pca_weights_amount',
+                                                'backbone_weights',
+                                                'hs_output_weights', 'enc_output_weights']:
+                                if outputsH[key_weights] is not None:
+                                    outputsH[key_weights] = outputsH[key_weights][0:1, :, :]
+                        else:
+                            draw_image = samples.tensors[i].detach().cpu()
+                            draw_mask = samples.mask[i].detach().cpu()
+
+                        if coco_evaluator is not None:
+                            scaled_boxes = res[image_id]['boxes'].detach().cpu()  # n_box, 4
+                            res_labels = res[image_id]['labels'].detach().cpu()
+                            res_scores = res[image_id]['scores'].detach().cpu()
+                        else:
+                            scaled_boxes = res_labels = res_scores = None
+
+                        masked_image, unscaled_boxes = convert_sample_and_boxes(draw_image, draw_mask,
+                                                                                scaled_boxes)
+
+                        pil_image = tensor_to_pil(masked_image,
+                                                  orig_size=(targets[i]['orig_size'][1].item(),
+                                                             targets[i]['orig_size'][0].item()))
+                        if coco_evaluator is not None:
+                            # draw bboxes
+                            pil_image = draw_bboxes_on_pil(pil_image, unscaled_boxes, res_labels,
+                                                           scores=res_scores,
+                                                           vis_th=vis_th)
+
+                        if 'bbox_attn' in postprocessors.keys():
+                            resultsG, resultsH = postprocessors['bbox_attn'](outputsG, outputsH, orig_target_sizes)
+
+                            # resultsH['hs_attn_values']  # n_b or n_T, n_class-1, topk(3)
+                            # resultsH['hs_attn_bbox']    # n_b or n_T, n_class-1, topk(3), 4
+
+                            res_hs = {target['image_id'].item(): {'boxes': hs_bbox, 'scores': hs_scores} for target, hs_scores, hs_bbox in zip(targets, resultsH['hs_attn_values'], resultsH['hs_attn_bbox'])}
+                            res_boxes_hs = res_hs[image_id]['boxes']
+                            res_scores_hs = res_hs[image_id]['scores']
+
+                            for i_c in range(res_boxes_hs.shape[0]):
+                                pil_image = draw_bboxes_on_pil(pil_image, res_boxes_hs[i_c, :, :], [i_c] * 100,
+                                                               scores=res_scores_hs[i_c, :],
+                                                               vis_th=0.01)
+
+                        # draw saclass predictions
+                        unscaled_boxes = torch.tensor([[1, 1, 10, 10], [1, 21, 10, 30],
+                                                       [1, 41, 10, 50], [1, 61, 10, 70]])
+                        res_labels = ['refill', 'trash', 'dessert', 'lost']
+                        saclass_logits = outputsH['service_pred_logits']
+                        res_scores = torch.sigmoid(saclass_logits)[0, 1:].detach().cpu()
+                        vis_th = 0.0
+                        pil_image = draw_bboxes_on_pil(pil_image, unscaled_boxes, res_labels,
+                                                       scores=res_scores,
+                                                       vis_th=vis_th)
+
+                        pil_image.save(save_file_name, 'JPEG')
+
+            samples, targets = prefetcher.next()
+            samples2, targets2 = prefetcher2.next()
+
+        # gather the stats from all processes
+        metric_logger.synchronize_between_processes()
+        print("Averaged stats:", metric_logger)
+        if coco_evaluator is not None:
+            coco_evaluator.synchronize_between_processes()
+
+        # accumulate predictions from all images
+        if coco_evaluator is not None:
+            coco_evaluator.accumulate()
+            coco_evaluator.summarize()
+
+        sac_res = None
+        if sac_evaluator is not None:
+            sac_res = sac_evaluator.summarize()
+            print(sac_res)
+            # sac_evaluator.predictions
+
+        stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        if coco_evaluator is not None:
+            if 'bbox' in postprocessors.keys():
+                stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+            if 'segm' in postprocessors.keys():
+                stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+        if sac_res is not None:
+            stats.update(sac_res)
 
     return stats, coco_evaluator

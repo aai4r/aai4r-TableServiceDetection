@@ -1,13 +1,13 @@
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
-# from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
-# from .tcn import TemporalConvNet
+from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
+from .tcn import TemporalConvNet
 
 import pdb
 from typing import Optional, List
 from util import box_ops
-# from util.misc import accuracy
+from util.misc import accuracy
 import math
 from models.deformable_detr_multioutput_multidataset_multitrfmModule import masked_mean
 import torchvision
@@ -28,8 +28,8 @@ class TemporalBinder(nn.Module):
 
         elif self.tbinder_type == 'tcn':
             # input: [n_batch, n_channel, n_seq_len]
-            nhid = 25 # 25 default at tcn
-            nlevels = 8 # 8 default at tcn
+            nhid = 2063 # 25 default at tcn
+            nlevels = 2 # 8 default at tcn
             channel_sizes = [nhid] * nlevels
             self.attn_encoder = TemporalConvNet(num_inputs=self.num_feature,
                                                 num_channels=channel_sizes)
@@ -225,7 +225,7 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
     # aggregate_type: 'maxpool', 'avgpool', 'attn'
     def __init__(self, num_classes, num_trfm,
                  use_backbone=True, backbone_aggregate_type='same', apply_btl_backbone=False,
-                 use_encoder=True, apply_btl_encoder=False,
+                 use_encoder=True, apply_btl_encoder=False, encoder_aggregate_type='same',
                  use_roi=True, aggregate_type='maxpool', apply_btl_roi=False,
                  use_pca=False, pca_aggregate_type='same',
                  use_duration=False, limit_det_class=False, use_merge_det_amount=False,
@@ -247,6 +247,11 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
         self.apply_btl_encoder = apply_btl_encoder
         self.apply_btl_roi = apply_btl_roi
         self.apply_one_value_amount = apply_one_value_amount
+
+        self.no_value_for_pred = 0.
+        self.no_value_for_amount = 1.   # v3, 0. -> 1.
+        self.no_value_for_progress = 0.
+        self.no_value_for_duration = 0.5
 
         list_det_classname = ['background',
                               'food', 'drink', 'dish', 'cup', 'empty_container',
@@ -314,6 +319,11 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
         else:
             self.pca_aggregate_type = pca_aggregate_type
 
+        if encoder_aggregate_type == 'same':
+            self.aggregate_type_enc = self.aggregate_type
+        else:
+            self.aggregate_type_enc = encoder_aggregate_type
+
         self.lv_backbone = 4
 
         self.final_layer_type = final_layer_type
@@ -343,7 +353,7 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
             enc_dim_input = self.encoder_dim
             self.encoder_dim = int(self.encoder_dim / self.btl_div)
 
-            if self.aggregate_type == 'attn_qkv' or self.aggregate_type == 'attn_simple':
+            if self.aggregate_type_enc == 'attn_qkv' or self.aggregate_type_enc == 'attn_simple':
                 self.encoder_btl = nn.ModuleList(
                     [nn.Sequential(nn.Linear(enc_dim_input, self.encoder_dim),
                                                  nn.ReLU()) for _ in range(num_classes)])
@@ -391,18 +401,22 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                     self.attn_pca_detclass = nn.Linear(self.pca_detclass_dim, self.num_classes)
 
         print('\taggregate_type:', self.aggregate_type)
-        if self.aggregate_type == 'attn_qkv':
+        if self.use_roi:
+            if self.aggregate_type == 'attn_qkv':
+                self.sac_embed_roi = nn.ModuleList(
+                    [nn.Embedding(self.num_classes, 256) for _ in range(self.num_trfm)])
+                self.attn_roi = nn.ModuleList(
+                    [nn.MultiheadAttention(embed_dim=256, num_heads=1) for _ in range(self.num_trfm)])
+            elif self.aggregate_type == 'attn_simple':
+                self.attn_roi = nn.ModuleList(
+                    [nn.Linear(256, self.num_classes) for _ in range(self.num_trfm)])
+
+        if self.use_encoder:
+            if self.aggregate_type_enc == 'attn_qkv':
             # each class owns its embedding, but shares attention layers.
-            if self.use_roi:
-                self.sac_embed_roi = nn.ModuleList([nn.Embedding(self.num_classes, 256) for _ in range(self.num_trfm)])
-                self.attn_roi = nn.ModuleList([nn.MultiheadAttention(embed_dim=256, num_heads=1) for _ in range(self.num_trfm)])
-            if self.use_encoder:
                 self.sac_embed_encoder = nn.ModuleList([nn.Embedding(self.num_classes, 256) for _ in range(self.num_trfm)])
                 self.attn_encoder = nn.ModuleList([nn.MultiheadAttention(embed_dim=256, num_heads=1) for _ in range(self.num_trfm)])
-        elif self.aggregate_type == 'attn_simple':
-            if self.use_roi:
-                self.attn_roi = nn.ModuleList([nn.Linear(256, self.num_classes) for _ in range(self.num_trfm)])
-            if self.use_encoder:
+            elif self.aggregate_type_enc == 'attn_simple':
                 self.attn_encoder = nn.ModuleList([nn.Linear(256, self.num_classes) for _ in range(self.num_trfm)])
 
         if 'attn' in self.aggregate_type or 'attn' in tbinder_type:
@@ -485,9 +499,6 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
         pca_weights_amount_nz_index = None
         if self.use_pca:
             x_pred_logits = x['pred_logits']    # [n_batch, n_roi, 21]
-            # # errorneous place to select det_class
-            # if self.limit_det_class:
-            #     x_pred_logits = x_pred_logits[:, :, self.used_det_class]
             x_pred_logits = torch.softmax(x_pred_logits, dim=2) # logit to probability
             # better place to select det_class
             if self.limit_det_class:
@@ -495,9 +506,11 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
 
             x_amount_score = x['amount_score']
 
-            s1, s2, s3 = x_amount_score.shape  # [n_batch, n_roi, 50]
-            nz_index = x_amount_score.mean(dim=2).nonzero(
-                as_tuple=True)  # along with class, [n_batch, 1200]
+            s1, s2, s3 = x_amount_score.shape  # [n_batch or n_seq, n_roi(1200), 50]
+            nz_index = x_amount_score.mean(dim=2).nonzero(as_tuple=True)  # along with class, [n_batch, 1200]
+            # 1200 amounts came from 4 transformer
+            # 3 yield amount, 1 not. (they are all zeros)
+            # remove zeros
             x_amount_score = torch.softmax(x_amount_score, dim=2)  # logit to probability # [n_batch, n_roi, 50]
 
             if self.apply_one_value_amount:
@@ -508,33 +521,34 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                 res_table = res_table.unsqueeze(0).unsqueeze(0) # [1, 1, 50]
                 res_table = res_table.expand(s1, s2, s3)    # [s1, s2, 50]
                 x_amount_score = torch.sum(x_amount_score * res_table.cuda(), dim=2, keepdim=True)  # [n_b, n_roi, 1]
-                s1, s2, s3 = x_amount_score.shape  # [n_batch, n_roi, 50]
+                s1, s2, s3 = x_amount_score.shape  # [n_batch, n_roi, 1]
 
                 # added at v3, meaningless amount becomes 1.0 instead of 0.5
                 mask_x_amount_score = torch.zeros(x_amount_score.shape).type(torch.bool)
                 mask_x_amount_score[nz_index] = True
-                x_amount_score[~mask_x_amount_score] = 1.0
+                x_amount_score[~mask_x_amount_score] = self.no_value_for_amount
 
             if self.use_merge_det_amount:
+                # keep n_roi and merge with det in later
                 x_amount_score_nz = x_amount_score      # > [n_b, n_roi, 50]
             else:
                 # every batch has same nonzero amount because 3 of 4 generates food amount, one stream dont
-                x_amount_score_nz = x_amount_score[nz_index].view(s1, -1, s3)   # [n_b, nz_roi, 50]
+                x_amount_score_nz = x_amount_score[nz_index].view(s1, -1, s3)   # [n_b, nz_roi, 50 or 1]
 
             if self.apply_nms_on_pca:
                 x_pred_bbox = x['pred_boxes']
                 # x_amount_score_nz
-                s1, s2, s3 = x_pred_logits.shape
+                s1, s2, s3 = x_pred_logits.shape        # n_b, n_roi(1200), n_class(10)
                 # nms_index_masks = torch.zeros((s1, s2))
                 nms_index_masks = []
                 for i_th in range(s3):
-                    x_pred_logits_c = x_pred_logits[:, :, i_th].detach()
+                    x_pred_logits_c = x_pred_logits[:, :, i_th].detach()    # n_b, n_roi(1200)
 
-                    keep_indices = self.apply_nms(x_pred_bbox, x_pred_logits_c)
+                    keep_indices = self.apply_nms(x_pred_bbox, x_pred_logits_c)     # one bbox, n_class scores
                     # nms_index_masks += keep_indices
                     nms_index_masks.append(keep_indices)
 
-                nms_index_masks = torch.stack(nms_index_masks, dim=2)
+                nms_index_masks = torch.stack(nms_index_masks, dim=2)   # n_b, n_roi, n_class
                 nms_index_masks = nms_index_masks.type(torch.bool)
                 if not self.use_merge_det_amount:
                     nms_nz_index_masks = nms_index_masks[nz_index]
@@ -791,13 +805,13 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                 'enc_memory'].shape  # [n_batch, n_trfm(4), n_spatial_pixels(17867), 256]
             enc_memory = x['enc_memory']  # [n_b, n_trfm(4), s3(71,468), 256]
 
-            if self.aggregate_type == 'maxpool':
+            if self.aggregate_type_enc == 'maxpool':
                 enc_memory_pool, _index = enc_memory.max(dim=2)  # [n_b, n_trfm(4), 256]
                 enc_memory_pool = enc_memory_pool.view(s1, s2 * s4)
-            elif self.aggregate_type == 'avgpool':
+            elif self.aggregate_type_enc == 'avgpool':
                 enc_memory_pool = enc_memory.mean(dim=2)
                 enc_memory_pool = enc_memory_pool.view(s1, s2 * s4)
-            elif self.aggregate_type == 'attn_qkv':
+            elif self.aggregate_type_enc == 'attn_qkv':
                 trfm_enc_memory_pool = []
                 trfm_enc_output_weights = []
                 for i_trfm in range(self.num_trfm):
@@ -813,7 +827,7 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                 enc_memory_pool = torch.cat(trfm_enc_memory_pool, dim=2)  # [5, 16, 256*n_trfm]
                 enc_output_weights = torch.cat(trfm_enc_output_weights,
                                                dim=2)  # [16, 5, 300*n_trfm]
-            elif self.aggregate_type == 'attn_simple':
+            elif self.aggregate_type_enc == 'attn_simple':
                 trfm_enc_memory_pool = []
                 trfm_enc_output_weights = []
                 for i_trfm in range(self.num_trfm):
@@ -834,12 +848,12 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                 enc_output_weights = torch.cat(trfm_enc_output_weights,
                                                dim=2)  # [16, 5, 300*n_trfm]
             else:
-                raise AssertionError('Unsupported aggreate_type: ', self.aggregate_type)
+                raise AssertionError('Unsupported aggreate_type: ', self.aggregate_type_enc)
 
             if self.apply_btl_encoder:
-                if self.aggregate_type == 'maxpool' or self.aggregate_type == 'avgpool':
+                if self.aggregate_type_enc == 'maxpool' or self.aggregate_type_enc == 'avgpool':
                     enc_memory_pool = self.encoder_btl(enc_memory_pool)
-                elif self.aggregate_type == 'attn_qkv' or self.aggregate_type == 'attn_simple':
+                elif self.aggregate_type_enc == 'attn_qkv' or self.aggregate_type_enc == 'attn_simple':
                     list_btl_enc_memory_pool = []
                     for i_batch in range(enc_memory_pool.shape[0]):
                         btl_enc_memory_pool = self.encoder_btl[i_batch](enc_memory_pool[i_batch,:,:])
@@ -868,7 +882,10 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                 if self.use_roi:
                     list_attn_features.append(x_hs_last_pool[i, :, :])  # [n_class(i), n_batch, 256] > [n_batch, 256]
                 if self.use_encoder:
-                    list_attn_features.append(enc_memory_pool[i, :, :]) # n_batch, 256
+                    if self.aggregate_type_enc == 'avgpool' or self.aggregate_type_enc == 'maxpool':
+                        list_attn_features.append(enc_memory_pool)
+                    else:
+                        list_attn_features.append(enc_memory_pool[i, :, :]) # n_batch, 256
 
                 x_cat = torch.cat(list_attn_features, dim=1)  # [n_batch, n_hid1+n_hid2+...]
                 x_cat = self.tbinder[i](x_cat)
@@ -1000,6 +1017,7 @@ class PostProcess(nn.Module):
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
+        print('pred and bbox')
         prob = out_logits.sigmoid()
         topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)
         scores = topk_values
@@ -1015,81 +1033,94 @@ class PostProcess(nn.Module):
 
         results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
 
+        print('results_sac')
         results_sac = {}
         if 'amount_score' in outputsG.keys():
             results_sac['amount_score'] = outputsG['amount_score'][:, topk_boxes[0], :]  # [1, 100, 50]
 
-        service_pred_logits = outputsH['service_pred_logits']
-        n_sac_classes = service_pred_logits.shape[1]    # 5
-
-        hs_output_weights = outputsH['hs_output_weights']  # [n_b, n_class(5), 1200]
-        if hs_output_weights is not None:
-            results_sac['hs_attn_values'], results_sac['hs_attn_bbox'] = self.get_weightedbbox_from_weight(hs_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
-                                         topk=3)
-
+        # To show attn
+        # service_pred_logits = outputsH['service_pred_logits']
+        # n_sac_classes = service_pred_logits.shape[1]    # 5
+        #
+        # print('hs_output_weights')
         # hs_output_weights = outputsH['hs_output_weights']  # [n_b, n_class(5), 1200]
-        # list_hs_attn_values = []
-        # # list_hs_attn_bbox_indexes = []
-        # list_hs_boxes = []
         # if hs_output_weights is not None:
-        #     for i_c in range(1, n_sac_classes):
-        #         hs_attn_values, hs_attn_bbox_indexes = torch.topk(hs_output_weights[:, i_c, :], 3, dim=1)    # [n_b, 1200]
-        #         boxes_hs = torch.gather(boxes_xyxy, 1, hs_attn_bbox_indexes.unsqueeze(-1).repeat(1, 1, 4))
+        #     results_sac['hs_attn_values'], results_sac['hs_attn_bbox'] = \
+        #         self.get_weightedbbox_from_weight(hs_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
+        #                                  topk=3)
         #
-        #         list_hs_attn_values.append(hs_attn_values.unsqueeze(1))
-        #         # list_hs_attn_bbox_indexes.append(hs_attn_bbox_indexes.unsqueeze(1))
-        #         list_hs_boxes.append(boxes_hs.unsqueeze(1))
+        # # hs_output_weights = outputsH['hs_output_weights']  # [n_b, n_class(5), 1200]
+        # # list_hs_attn_values = []
+        # # # list_hs_attn_bbox_indexes = []
+        # # list_hs_boxes = []
+        # # if hs_output_weights is not None:
+        # #     for i_c in range(1, n_sac_classes):
+        # #         hs_attn_values, hs_attn_bbox_indexes = torch.topk(hs_output_weights[:, i_c, :], 3, dim=1)    # [n_b, 1200]
+        # #         boxes_hs = torch.gather(boxes_xyxy, 1, hs_attn_bbox_indexes.unsqueeze(-1).repeat(1, 1, 4))
+        # #
+        # #         list_hs_attn_values.append(hs_attn_values.unsqueeze(1))
+        # #         # list_hs_attn_bbox_indexes.append(hs_attn_bbox_indexes.unsqueeze(1))
+        # #         list_hs_boxes.append(boxes_hs.unsqueeze(1))
+        # #
+        # #     results_sac['hs_attn_values'] = torch.cat(list_hs_attn_values, dim=1)
+        # #     results_sac['hs_attn_bbox'] = torch.cat(list_hs_boxes, dim=1) * scale_fct[:, None, None, :]  # n_batch, n_class-1, topk, 4(xyxyx)
         #
-        #     results_sac['hs_attn_values'] = torch.cat(list_hs_attn_values, dim=1)
-        #     results_sac['hs_attn_bbox'] = torch.cat(list_hs_boxes, dim=1) * scale_fct[:, None, None, :]  # n_batch, n_class-1, topk, 4(xyxyx)
-
-
-        enc_output_weights = outputsH['enc_output_weights']
-        if enc_output_weights is not None:
-            results_sac['enc_attn_values'], results_sac['enc_attn_bbox'] = self.get_weightedbbox_from_weight(enc_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
-                                         topk=3)
-
+        # print('enc_output_weights')
         # enc_output_weights = outputsH['enc_output_weights']
-        # list_enc_attn_values = []
-        # # list_enc_attn_bbox_indexes = []
-        # list_enc_boxes = []
         # if enc_output_weights is not None:
-        #     for i_c in range(1, n_sac_classes):
-        #         enc_attn_values, enc_attn_bbox_indexes = torch.topk(enc_output_weights[:, i_c, :], 3, dim=1)
-        #         boxes_enc = torch.gather(boxes_xyxy, 1, enc_attn_bbox_indexes.unsqueeze(-1).repeat(1, 1, 4))
+        #     results_sac['enc_attn_values'], results_sac['enc_attn_bbox'] = \
+        #         self.get_weightedbbox_from_weight(enc_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
+        #                                  topk=3)
         #
-        #         list_enc_attn_values.append(enc_attn_values.unsqueeze(1))
-        #         # list_enc_attn_bbox_indexes.append(enc_attn_bbox_indexes.unsqueeze(1))
-        #         list_enc_boxes.append(boxes_enc.unsqueeze(1))
+        # # enc_output_weights = outputsH['enc_output_weights']
+        # # list_enc_attn_values = []
+        # # # list_enc_attn_bbox_indexes = []
+        # # list_enc_boxes = []
+        # # if enc_output_weights is not None:
+        # #     for i_c in range(1, n_sac_classes):
+        # #         enc_attn_values, enc_attn_bbox_indexes = torch.topk(enc_output_weights[:, i_c, :], 3, dim=1)
+        # #         boxes_enc = torch.gather(boxes_xyxy, 1, enc_attn_bbox_indexes.unsqueeze(-1).repeat(1, 1, 4))
+        # #
+        # #         list_enc_attn_values.append(enc_attn_values.unsqueeze(1))
+        # #         # list_enc_attn_bbox_indexes.append(enc_attn_bbox_indexes.unsqueeze(1))
+        # #         list_enc_boxes.append(boxes_enc.unsqueeze(1))
+        # #
+        # #     results_sac['enc_attn_values'] = torch.cat(list_enc_attn_values, dim=1)
+        # #     results_sac['enc_attn_bbox'] = torch.cat(list_enc_boxes, dim=1) * scale_fct[:, None, None, :]
+        # print('pca_weights_bbox')
+        # pca_bbox_output_weights = outputsH['pca_weights_bbox']    # [1, 5, 1200]
+        # if pca_bbox_output_weights is not None:
+        #     results_sac['pca_bbox_attn_values'], results_sac['pca_bbox_attn_bbox'] = \
+        #         self.get_weightedbbox_from_weight(pca_bbox_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
+        #                                  topk=3)
         #
-        #     results_sac['enc_attn_values'] = torch.cat(list_enc_attn_values, dim=1)
-        #     results_sac['enc_attn_bbox'] = torch.cat(list_enc_boxes, dim=1) * scale_fct[:, None, None, :]
-
-        pca_bbox_output_weights = outputsH['pca_weights_bbox']    # [1, 5, 1200]
-        if pca_bbox_output_weights is not None:
-            results_sac['pca_bbox_attn_values'], results_sac['pca_bbox_attn_bbox'] = self.get_weightedbbox_from_weight(pca_bbox_output_weights, n_sac_classes, boxes_xyxy, scale_fct,
-                                         topk=3)
-
-        pca_amount_output_weights = outputsH['pca_weights_amount']  # [1, 5, 900]
-        if pca_amount_output_weights is not None:
-            s1, s2, s3 = boxes_xyxy.shape
-            nz_index = outputsH['pca_weights_amount_nz_index']  # tuple w/ 2 elements
-            boxes_xyxy_nz = boxes_xyxy[nz_index].view(s1, -1, s3)
-
-            results_sac['pca_amount_attn_values'], results_sac['pca_amount_attn_bbox'] = self.get_weightedbbox_from_weight(
-                pca_amount_output_weights, n_sac_classes, boxes_xyxy_nz, scale_fct,
-                topk=3)
-
-        # outputsH
-        # 'enc_output_weights' # encoder
-        # 'hs_output_weights' # ROI
+        # print('pca_weights_bbox - plus')
+        # pca_amount_output_weights = outputsH['pca_weights_amount']  # [1, 5, 900]
+        # if pca_amount_output_weights is not None:
+        #     s1, s2, s3 = boxes_xyxy.shape
+        #     nz_index = outputsH['pca_weights_amount_nz_index']  # tuple w/ 2 elements
+        #     boxes_xyxy_nz = boxes_xyxy[nz_index].view(s1, -1, s3)
+        #
+        #     results_sac['pca_amount_attn_values'], results_sac['pca_amount_attn_bbox'] = \
+        #         self.get_weightedbbox_from_weight(
+        #         pca_amount_output_weights, n_sac_classes, boxes_xyxy_nz, scale_fct,
+        #         topk=3)
+        #
+        # # outputsH
+        # # 'enc_output_weights' # encoder
+        # # 'hs_output_weights' # ROI
 
         return results, results_sac
 
     @torch.no_grad()
-    def get_weightedbbox_from_weight(self, input_weights, n_sac_classes, boxes_xyxy, scale_fct, topk=3):
+    def get_weightedbbox_from_weight(self, _input_weights, n_sac_classes, boxes_xyxy, scale_fct, topk=3):
         list_attn_values = []
         list_boxes = []
+
+        if _input_weights.shape[0] != boxes_xyxy.shape[0]:
+            input_weights = _input_weights[-1:].clone().detach()
+        else:
+            input_weights = _input_weights.clone().detach()
 
         for i_c in range(1, n_sac_classes):
             # input_weights # [n_b, n_clas(5), 1200]
@@ -1144,6 +1175,13 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
                                                     aggregate_type='attn_simple')
         postprocessors['bbox_attn'] = PostProcess()
 
+    elif saclassifier_type == 'pcaattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=False,
+                                                    use_encoder=False, use_roi=False,
+                                                    use_pca=True,
+                                                    aggregate_type='attn_simple')
+        # postprocessors['bbox_attn'] = PostProcess()
+
     elif saclassifier_type == 'imageavgp_pcadattnsimple':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
                                                     backbone_aggregate_type='avgpool',
@@ -1178,7 +1216,25 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
                                                     limit_det_class=True, apply_nms_on_pca=True,
                                                     apply_one_value_amount=True,
                                                     aggregate_type='attn_simple')
-        postprocessors['bbox_attn'] = PostProcess()
+        # postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'pca1dlcnmsavgp':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=False,
+                                                    use_encoder=False, use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='avgpool')
+        # postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=False,
+                                                    use_encoder=False, use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple')
+        # postprocessors['bbox_attn'] = PostProcess()
 
     elif saclassifier_type == 'T5maxp_imageavgp_pca1dlcnmsattnsimple':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
@@ -1200,6 +1256,42 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
                                                     apply_one_value_amount=True,
                                                     aggregate_type='attn_simple',
                                                     tbinder_type='avgpool')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='avgpool')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5avgp_imageavgp_encv2avgp_pca1dlcmgnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    use_merge_det_amount=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='avgpool')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5tcn_imageavgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=False, use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='tcn')
         # postprocessors['bbox_attn'] = PostProcess()
 
     elif saclassifier_type == 'T5attnsimple_imageavgp_pca1dlcnmsattnsimple':
@@ -1211,7 +1303,43 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
                                                     apply_one_value_amount=True,
                                                     aggregate_type='attn_simple',
                                                     tbinder_type='attn_simple')
-        # postprocessors['bbox_attn'] = PostProcess()
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5attnsimple_imageavgp_encv2avgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='attn_simple')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5maxp_imageavgp_encv2avgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='maxpool')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5tcn_imageavgp_encv2avgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='tcn')
+        postprocessors['bbox_attn'] = PostProcess()
 
     elif saclassifier_type == 'imageavgp_roiv2attnsimplebtl_pca1dlcnmsattnsimple':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
@@ -1227,13 +1355,33 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
     elif saclassifier_type == 'imageavgp_roiv2attnsimple_pca1dlcnmsattnsimple':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
                                                     backbone_aggregate_type='avgpool',
-                                                    use_encoder=False,
-                                                    use_roi=True,
+                                                    use_encoder=False, use_roi=True,
                                                     use_pca=True, use_duration=True,
                                                     limit_det_class=True, apply_nms_on_pca=True,
                                                     apply_one_value_amount=True,
                                                     aggregate_type='attn_simple')
         # postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'imageavgp_encv2attnsimple_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple')
+        # postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'imageavgp_encv2avgp_pca1dlcnmsattnsimple':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple')
+        postprocessors['bbox_attn'] = PostProcess()
 
     elif saclassifier_type == 'imageavgpbtl_pca1dlcnmsattnsimple':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
@@ -1374,6 +1522,11 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
                                                     use_encoder=False, use_roi=False,
                                                     aggregate_type='maxpool')
+
+    elif saclassifier_type == 'imageavgp':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    use_encoder=False, use_roi=False,
+                                                    aggregate_type='avgpool')
 
     elif saclassifier_type == 'imageavgp_MLP2':
         model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,

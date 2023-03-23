@@ -23,7 +23,7 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 from .backbone import build_backbone
 # from .backbone_uda import build_backbone as build_backbone_uda
 from .matcher import build_matcher
-# from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm, dice_loss, sigmoid_focal_loss, sigmoid_focal_loss_asis)
+from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm, dice_loss, sigmoid_focal_loss, sigmoid_focal_loss_asis)
 from .deformable_transformer import build_deforamble_transformer
 import copy
 import pdb
