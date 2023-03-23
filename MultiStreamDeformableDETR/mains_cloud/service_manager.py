@@ -67,11 +67,13 @@ class ServiceManager:
         # return only-one service with max prob
         ret_max_prob = -1
         ret_service = self.list_services[0].service_name
+        ret_service_index = -1
 
-        for ith_service in self.list_services[1:]:
+        for ith, ith_service in enumerate(self.list_services[1:]):
             if ith_service.current_decision and ith_service.prob > ret_max_prob:
                 ret_max_prob = ith_service.prob
                 ret_service = ith_service.service_name
+                ret_service_index = ith
 
         # remove other activations (T to F)
         for ith_service in self.list_services[1:]:
@@ -82,4 +84,4 @@ class ServiceManager:
         for ith_service in self.list_services[1:]:
             ith_service.update()
 
-        return ret_service
+        return ret_service_index, ret_service

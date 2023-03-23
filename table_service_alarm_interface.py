@@ -59,7 +59,7 @@ class TableServiceAlarm:
 
             '--num_classes_on_G', '21',
             '--num_classes_on_H', '5',
-            '--saclassifier_type', 'imageavgp_pca1dlcnmsattnsimple',
+            '--saclassifier_type', 'imageavgp_encv2avgp_pca1dlcnmsattnsimple',
 
             '--vis_th', '0.7',
             '--eval',
@@ -379,10 +379,10 @@ class TableServiceAlarm:
 
             print('processing time: ', time.time() - t0)
 
-            repr_service_name = self.service_manager.process(service_results,
+            repr_service_index, repr_service_name = self.service_manager.process(service_results,
                                                              current_time_in_seconds)
 
-            return detection_results, service_results, repr_service_name, source_img
+            return detection_results, service_results, repr_service_index, repr_service_name, source_img
 
 
 class TableServiceAlarmRequestHandler(object):
@@ -400,9 +400,9 @@ class TableServiceAlarmRequestHandler(object):
         # - ex) result = [[100,100,200,200,154], [200,300,200,300,12]]
         # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
         # - ex) result = [0.7, 0.1, 0.1, 0.2]
-        detection_results, service_results, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
+        detection_results, service_results, repr_service_index, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
-        return detection_results, service_results, rep_service_name, vis_img
+        return detection_results, service_results, repr_service_index, rep_service_name, vis_img
 
     def process_inference_request_imgurl(self, image_url, current_time_in_seconds):
         # 1. Read an url image and convert it to an ipl image
@@ -414,9 +414,9 @@ class TableServiceAlarmRequestHandler(object):
         # - ex) result = [(100,100,200,200,154), (200,300,200,300,12)]
         # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
         # - ex) result = [0.7, 0.1, 0.1, 0.2]
-        detection_results, service_results, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
+        detection_results, service_results, repr_service_index, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
-        return detection_results, service_results, rep_service_name, vis_img
+        return detection_results, service_results, repr_service_index, rep_service_name, vis_img
 
 
 # one time test
@@ -432,7 +432,7 @@ if __name__ == '__main__':
     # 3. Give an image and get the results
     ipl_img = Image.open('example.jpg')  # read as rgb
     duration_time_in_sec = 300
-    detection_results, service_results, rep_service_name, im2show = \
+    detection_results, service_results, repr_service_index, repr_service_name, im2show = \
         handler.process_inference_request(ipl_img, duration_time_in_sec)        # request
     # detection_results, service_results, rep_service_name, im2show = \
     #     handler.process_inference_request_imgurl(image_url, duration_time_in_sec)        # request
@@ -448,7 +448,7 @@ if __name__ == '__main__':
         print(f"  {sac_name}: {result:.4f}")
 
     print('\n')
-    print('Representative Service: ', rep_service_name)
+    print(f'Representative Service index and name: ', repr_service_index, repr_service_name)
 
     # 5. Save the result image
     if im2show is not None:
