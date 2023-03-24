@@ -461,14 +461,14 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
                     list_img_seq.pop(0)
                     list_x_duration.pop(0)
 
-                # list to tensor
-                img_seq = torch.cat(list_img_seq, dim=0)
-                img_seq = img_seq.cuda()        # [1, 3, 800, 1422]
-
-                x_duration = torch.stack(list_x_duration, dim=0)    #
-                x_duration = x_duration.unsqueeze(dim=1).cuda()     # n_T, 1
-
                 if int(im_sec_only) % args.processing_per_frames == 0:
+                    # list to tensor
+                    img_seq = torch.cat(list_img_seq, dim=0)
+                    img_seq = img_seq.cuda()  # [1, 3, 800, 1422]
+
+                    x_duration = torch.stack(list_x_duration, dim=0)  #
+                    x_duration = x_duration.unsqueeze(dim=1).cuda()  # n_T, 1
+
                     outputsG = modelG(img_seq)
                     outputsG['duration'] = x_duration
                     outputsH = modelH(outputsG)
