@@ -814,6 +814,7 @@ def evaluate_on_saclassifier_wDETR(modelG, modelH, criterionG, criterionH, postp
 
         sac_res = None
         if sac_evaluator is not None:
+            sac_evaluator.synchronize_between_processes()   # necessary for multi GPUs
             sac_res = sac_evaluator.summarize()
             print(sac_res)
             # sac_evaluator.predictions
