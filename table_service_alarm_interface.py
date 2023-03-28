@@ -193,8 +193,8 @@ class TableServiceAlarm:
                 self.list_x_duration.pop(0)
 
             if int(duration_seconds) % self.args.processing_per_frames != 0:
-                print('TableServiceAlarm.detect: image stack and skip process',
-                      duration_seconds, len(self.list_img_seq))
+                # print('TableServiceAlarm.detect: image stack and skip process',
+                #       duration_seconds, len(self.list_img_seq))
                 detection_results = []
                 service_results = []
                 repr_service_index = -1
@@ -205,8 +205,8 @@ class TableServiceAlarm:
                     source_img = None
                 return detection_results, service_results, repr_service_index, repr_service_name, source_img
             else:
-                print('TableServiceAlarm.detect: process the img_seq',
-                      duration_seconds, len(self.list_img_seq))
+                # print('TableServiceAlarm.detect: process the img_seq',
+                #       duration_seconds, len(self.list_img_seq))
 
                 # list to tensor
                 img_seq = torch.cat(self.list_img_seq, dim=0)
@@ -423,6 +423,9 @@ class TableServiceAlarm:
 
                 if draw_result:
                     draw.text((10, 150), f'repr_service: {repr_service_index}, {repr_service_name}')
+
+                # service_results, limiting float to two decimal points
+                service_results = [round(item, 4) for item in service_results]
 
             return detection_results, service_results, repr_service_index, repr_service_name, source_img
 
