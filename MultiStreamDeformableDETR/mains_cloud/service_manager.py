@@ -2,11 +2,11 @@ import pdb
 
 
 class ServiceInfo:
-    def __init__(self, service_name='none'):
+    def __init__(self, service_name='none', threshold=0.5):
         self.service_name = service_name
 
         self.prob = 0.
-        self.threshold = 0.5
+        self.threshold = threshold
         self.current_decision = False
         self.current_secs = -1
 
@@ -40,12 +40,16 @@ class ServiceManager:
     def __init__(self, list_service_name=('no_service',
                                           'refill_food', 'found_trash',
                                           'provide_dessert', 'found_lost'),
-                 start_time_in_sec=0.):
+                 start_time_in_sec=0., list_threshold=None):
         self.start_time_in_sec = start_time_in_sec
 
+        self.sname_to_index = {service_name: idx for idx, service_name in enumerate(list_service_name)}
         self.list_services = []
         for ith, service_name in enumerate(list_service_name):
-            self.list_services.append(ServiceInfo(service_name))
+            if list_threshold is None:
+                self.list_services.append(ServiceInfo(service_name))
+            else:
+                self.list_services.append(ServiceInfo(service_name, threshold=list_threshold[ith]))
 
     def set_start_time(self, start_time_in_sec=0.):
         self.start_time_in_sec = start_time_in_sec
@@ -53,11 +57,15 @@ class ServiceManager:
     def process(self, pred_service_prob, current_time_in_sec):
         duration_time_in_sec = current_time_in_sec - self.start_time_in_sec
         # put and decide
-        self.list_services[0].set_prob(1. - max(pred_service_prob), duration_time_in_sec)
+        self.list_services[self.sname_to_index['no_service']].set_prob(1. - max(pred_service_prob), duration_time_in_sec)
         for ith, ith_service in enumerate(self.list_services[1:]):
             ith_service.set_prob(pred_service_prob[ith], duration_time_in_sec)
 
         # add manual decision
+        # apply 'refill_food' prob by multiplying 'provide_dessert' prob
+        scale_for_refill = (1. - self.list_services[self.sname_to_index['provide_dessert']].prob)
+        self.list_services[self.sname_to_index['refill_food']] *= scale_for_refill
+
         # print('current status of service_manager')
 
         # check limits
