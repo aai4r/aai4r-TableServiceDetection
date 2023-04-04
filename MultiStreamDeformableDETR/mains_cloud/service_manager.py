@@ -63,8 +63,8 @@ class ServiceManager:
 
         # add manual decision
         # apply 'refill_food' prob by multiplying 'provide_dessert' prob
-        scale_for_refill = (1. - self.list_services[self.sname_to_index['provide_dessert']].prob)
-        self.list_services[self.sname_to_index['refill_food']] *= scale_for_refill
+        scale_for_refill = 1. - self.list_services[self.sname_to_index['provide_dessert']].prob
+        self.list_services[self.sname_to_index['refill_food']].prob *= scale_for_refill
 
         # print('current status of service_manager')
 

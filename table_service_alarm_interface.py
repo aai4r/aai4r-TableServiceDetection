@@ -32,7 +32,9 @@ from MultiStreamDeformableDETR.mains_cloud.service_manager import ServiceManager
 
 
 class TableServiceAlarm:
-    def __init__(self, model_path):
+    def __init__(self, model_path, list_service_name=('no_service', 'refill_food', 'found_trash',
+                                                      'provide_dessert', 'found_lost'),
+                 list_service_threshold=None):
         # setup arguments
         self.start_time_in_seconds = None
         self.list_img_seq = []
@@ -157,8 +159,8 @@ class TableServiceAlarm:
         self.vis_th = 0.7
         self.args = args
 
-        self.service_manager = ServiceManager()
-
+        self.service_manager = ServiceManager(list_service_name=list_service_name,
+                                              list_threshold=list_service_threshold)
 
     def setStartTime(self, start_time_in_seconds):
         self.start_time_in_seconds = start_time_in_seconds
@@ -432,7 +434,14 @@ class TableServiceAlarm:
 
 class TableServiceAlarmRequestHandler(object):
     def __init__(self, model_path):
-        self.tsa = TableServiceAlarm(model_path)
+        self.list_service_name = ('no_service', 'refill_food', 'found_trash',
+                                  'provide_dessert', 'found_lost')
+        self.list_service_threshold = (0.0, 0.5, 0.5, 0.73, 0.5)  # for captured1
+        # self.list_service_threshold = (0.0, 0.64, 0.73, 0.73, 0.5)  # for captured2
+        # self.list_service_threshold = (0.0, 0.5, 0.51, 0.73, 0.5)  # for captured3
+
+        self.tsa = TableServiceAlarm(model_path, list_service_name=self.list_service_name,
+                                     list_service_threshold=self.list_service_threshold)
         self.det_classes = self.tsa.classes
         self.sac_classes = self.tsa.sac_classes
 
