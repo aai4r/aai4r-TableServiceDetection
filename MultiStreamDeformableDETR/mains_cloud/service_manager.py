@@ -59,12 +59,17 @@ class ServiceManager:
         # put and decide
         self.list_services[self.sname_to_index['no_service']].set_prob(1. - max(pred_service_prob), duration_time_in_sec)
         for ith, ith_service in enumerate(self.list_services[1:]):
-            ith_service.set_prob(pred_service_prob[ith], duration_time_in_sec)
+            ith_service.set_prob(pred_service_prob[ith], duration_time_in_sec)  # set prob and get a decision
 
         # add manual decision
         # apply 'refill_food' prob by multiplying 'provide_dessert' prob
+        # print('before: ', self.list_services[self.sname_to_index['refill_food']].prob)
         scale_for_refill = 1. - self.list_services[self.sname_to_index['provide_dessert']].prob
-        self.list_services[self.sname_to_index['refill_food']].prob *= scale_for_refill
+        rescaled_refill_food_prob = scale_for_refill * self.list_services[self.sname_to_index['refill_food']].prob
+        self.list_services[self.sname_to_index['refill_food']].set_prob(rescaled_refill_food_prob,
+                                                                        duration_time_in_sec)
+        # print('scale: ', scale_for_refill)
+        # print('after: ', self.list_services[self.sname_to_index['refill_food']].prob)
 
         # print('current status of service_manager')
 
