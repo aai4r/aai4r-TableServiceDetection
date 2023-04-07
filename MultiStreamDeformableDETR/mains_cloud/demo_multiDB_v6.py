@@ -36,10 +36,9 @@ from models.service_detector import build_SAclassifier
 from my_debug import draw_bboxes_on_pil, images_to_video
 from my_debug import get_duration_using_startDate, get_start_time_by_date
 from service_manager import ServiceManager
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list)
-from my_debug import tensor_to_pil
+
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 # v2. add nms for merging outputs
@@ -191,7 +190,6 @@ def get_args_parser():
     parser.add_argument('--vis_th', type=float, default=0.7)
     parser.add_argument('--crop_ratio_ROI', nargs='+', type=float)
     # parser.add_argument('--process_per_n_image', default=1, type=int)
-    parser.add_argument('--process_n_per_min', default=60, type=int)
     parser.add_argument('--skip_first_n_image', default=0, type=int)
     parser.add_argument('--display_class_names', default=[], type=str, nargs='*')
 
@@ -399,9 +397,6 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
     service_manager.set_start_time(start_time_in_sec)
 
     with torch.no_grad():
-        last_cap_sec = 0
-        duration_sec = 60.0 / float(args.process_n_per_min)
-
         list_img_seq = []
         list_x_duration = []
 
@@ -420,8 +415,7 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
 
             cur_cap_sec = 3600 * im_hrs + 60 * im_min + im_sec
 
-            if cur_cap_sec - last_cap_sec > duration_sec:
-                last_cap_sec = cur_cap_sec
+            if True:
                 # if i_th % args.process_per_n_image == 0:
                 t0 = time.time()
                 img_path = os.path.join(args.imgs_dir, img_file)
@@ -450,17 +444,6 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
                 # mean-std normalize the input image (batch-size: 1)
                 im = transform_resize(im_org)
                 img_x = transform(im).unsqueeze(0)
-
-                # # pdb.set_trace()
-                # # img_x[:,:, :round(800 * 0.2778), round(1422 * 0.3125):round(1422 * 0.66)] = 0
-                # # img_x[:,:, round(800 * 0.7):, round(1422 * 0.3125):round(1422 * 0.66)] = 0
-                # img_x[:,:, round(800 * 0.2778):round(800 * 0.7), :round(1422 * 0.3125)] = 0
-                # img_x[:,:, round(800 * 0.2778):round(800 * 0.7), round(1422 * 0.66):] = 0
-                #
-                #
-                # img_x_pil = tensor_to_pil(img_x[0])
-                # img_x_pil.save('debug_my.png')
-
                 list_img_seq.append(img_x)
 
                 # add duration time
@@ -477,18 +460,6 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
                     # list to tensor
                     img_seq = torch.cat(list_img_seq, dim=0)
                     img_seq = img_seq.cuda()  # [N, 3, 800, 1422]
-
-                    # img_seq = nested_tensor_from_tensor_list(img_seq)
-                    # img_seq.mask[:, :round(800*0.2778), :] = True
-                    # img_seq.mask[:, round(800*0.7):, :] = True
-                    # img_seq.mask[:, :, :round(1422*0.3125)] = True
-                    # img_seq.mask[:, :, round(1422*0.66):] = True
-                    # img_seq.mask[:, :round(800 * 0.14), :] = True
-                    # img_seq.mask[:, round(800 * 0.85):, :] = True
-                    # img_seq.mask[:, :, :round(1422 * 0.16)] = True
-                    # img_seq.mask[:, :, round(1422 * 0.82):] = True
-
-
 
 
                     x_duration = torch.stack(list_x_duration, dim=0)  #
@@ -511,6 +482,7 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
                     for key_outputsH in outputsH.keys():
                         if torch.is_tensor(outputsH[key_outputsH]):
                             outputsH[key_outputsH] = outputsH[key_outputsH][-1:]
+
 
                     if 'bbox_attn' in postprocessors.keys():
                         # hs_output_weights, n_sac_classes, boxes_xyxy
@@ -803,16 +775,15 @@ if __name__ == '__main__':
     list_of_date = [
         '2023-01-18', '2023-01-19', '2023-01-26', '2023-01-27', '2023-01-30',
         '2023-01-31', '2023-02-01', '2023-02-03', '2023-02-06', '2023-02-07',
-        '2023-02-09', '2023-02-10', '2023-02-14', '2023-02-15', '2023-02-16'
+        '2023-02-09', '2023-02-10', '2023-02-14', '2023-02-15', '2023-02-16',
         '2023-03-14', '2023-03-15', '2023-03-23', '2023-03-24', '2023-03-27',
-        '2023-03-28',
-        '2023-03-30'
+        '2023-03-28', '2023-03-30'
     ]  #
     for item in list_of_date:
         for cam in list_of_camera:
             # imgs_dir = f'{home_dir}/data/ETRI_GJHallDeploy/JPEGImages/{cam}/{item}'
             imgs_dir = f'/media/yochinNAS8782/_Dataset/Cloud_Data/GJHallDeploy/{cam}/{item}'
-            output_dir = f'./vis/{project_name}/wServiceManager_varTH_addDessertComp/{cam}/{item}'
+            output_dir = f'./vis/{project_name}/wServiceManager_varTH_addDessertComp2/{cam}/{item}'
 
             main(args, imgs_dir=imgs_dir, output_dir=output_dir, cap_date=item)
 
