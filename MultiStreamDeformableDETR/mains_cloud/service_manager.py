@@ -11,6 +11,7 @@ class ServiceInfo:
         self.current_secs = -1
 
         self.re_active_limit_secs = 60 * 5
+        self.valid_time_provide_dessert = 60 * 15
 
         self.last_activated_secs = -self.re_active_limit_secs
 
@@ -25,7 +26,7 @@ class ServiceInfo:
 
     def check_limits(self):
         if self.service_name == 'provide_dessert':
-            if self.current_secs <= 60 * 10:
+            if self.current_secs <= self.valid_time_provide_dessert:
                 self.current_decision = False
 
         if self.current_secs - self.last_activated_secs <= self.re_active_limit_secs:
@@ -64,10 +65,11 @@ class ServiceManager:
         # add manual decision
         # apply 'refill_food' prob by multiplying 'provide_dessert' prob
         # print('before: ', self.list_services[self.sname_to_index['refill_food']].prob)
-        scale_for_refill = 1. - self.list_services[self.sname_to_index['provide_dessert']].prob
-        rescaled_refill_food_prob = scale_for_refill * self.list_services[self.sname_to_index['refill_food']].prob
-        self.list_services[self.sname_to_index['refill_food']].set_prob(rescaled_refill_food_prob,
-                                                                        duration_time_in_sec)
+        if duration_time_in_sec > self.list_services[self.sname_to_index['provide_dessert']].valid_time_provide_dessert:
+            scale_for_refill = 1. - self.list_services[self.sname_to_index['provide_dessert']].prob
+            rescaled_refill_food_prob = scale_for_refill * self.list_services[self.sname_to_index['refill_food']].prob
+            self.list_services[self.sname_to_index['refill_food']].set_prob(rescaled_refill_food_prob,
+                                                                            duration_time_in_sec)
         # print('scale: ', scale_for_refill)
         # print('after: ', self.list_services[self.sname_to_index['refill_food']].prob)
 
