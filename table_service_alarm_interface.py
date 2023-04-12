@@ -436,9 +436,9 @@ class TableServiceAlarmRequestHandler(object):
     def __init__(self, model_path):
         self.list_service_name = ('no_service', 'refill_food', 'found_trash',
                                   'provide_dessert', 'found_lost')
-        # self.list_service_threshold = (0.0, 0.5, 0.5, 0.73, 0.5)  # for captured1
-        self.list_service_threshold = (0.0, 0.64, 0.73, 0.73, 0.5)  # for captured2
-        # self.list_service_threshold = (0.0, 0.5, 0.51, 0.73, 0.5)  # for captured3
+        # self.list_service_threshold = (0.5, 0.5, 0.5, 0.73, 0.5)  # for captured1
+        self.list_service_threshold = (0.5, 0.5, 0.73, 0.73, 0.5)  # for captured2
+        # self.list_service_threshold = (0.5, 0.5, 0.51, 0.73, 0.5)  # for captured3
 
         self.tsa = TableServiceAlarm(model_path, list_service_name=self.list_service_name,
                                      list_service_threshold=self.list_service_threshold)
