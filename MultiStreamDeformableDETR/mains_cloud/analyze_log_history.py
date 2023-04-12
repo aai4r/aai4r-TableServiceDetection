@@ -133,27 +133,27 @@ def log_analyzer(output_dir, log_filename, list_keys, x_key='epoch', es_epoch=No
 if __name__ == '__main__':
     path_to_base = '/home/yochin/Desktop/TableServiceDetector/MultiStreamDeformableDETR/mains_cloud/exps'
 
-    # through training
-    # project_name = 'ETRIGJHall/Imageavgp_Encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v4'
-    project_name = 'ETRIGJHall_Seq/T10avgp_imageavgp_encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3_allTraining_EarlyStop_MultiGPUs'
-    log_file = 'log_per_epoch_backup.txt'
-
-    # project_name = 'ETRIGJHall_Seq/T5attnsimple_imageavgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3'
-    # log_file = 'log_per_epoch.txt'
-    # log_file = 'log.txt'
-
-    path_to_output = os.path.join(path_to_base, project_name)
-
-    list_keys = ['test_sacs_acc', 'test_sacs_f1score', 'test_sacs_auc', 'test_sacs_prauc']   #
-
-    es_epoch = find_earlyStop_acc_checkpoint(path_to_output, log_file, list_keys, wait_epoch=20)
-    log_analyzer(path_to_output, log_file, list_keys, es_epoch=es_epoch)
-
-    # # through testing
-    # project_name = 'ETRIGJHallDeploy/T10avgp_imageavgp_encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3/list_captured1-list_captured2/checkpoint0029'
-    # log_file = 'eval.txt'
+    # # through training
+    # # project_name = 'ETRIGJHall/Imageavgp_Encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v4'
+    # project_name = 'ETRIGJHall_Seq/T10avgp_imageavgp_encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3_allTraining_EarlyStop_MultiGPUs'
+    # log_file = 'log_per_epoch_backup.txt'
+    #
+    # # project_name = 'ETRIGJHall_Seq/T5attnsimple_imageavgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3'
+    # # log_file = 'log_per_epoch.txt'
+    # # log_file = 'log.txt'
     #
     # path_to_output = os.path.join(path_to_base, project_name)
     #
-    # list_keys = ['test_sacs_acc', 'test_sacs_f1score', 'test_sacs_auc', 'test_sacs_prauc']
-    # log_analyzer(path_to_output, log_file, list_keys, x_key=None, es_epoch=None)
+    # list_keys = ['test_sacs_acc', 'test_sacs_f1score', 'test_sacs_auc', 'test_sacs_prauc']   #
+    #
+    # es_epoch = find_earlyStop_acc_checkpoint(path_to_output, log_file, list_keys, wait_epoch=20)
+    # log_analyzer(path_to_output, log_file, list_keys, es_epoch=es_epoch)
+
+    # through testing
+    project_name = 'ETRIGJHallDeploy/T10avgp_imageavgp_encv2avgp_pca1dlcnmsSoftmaxAttnSimple_frzDETR_wDet21c_v3/list_captured1/checkpoint0029'
+    log_file = 'eval.txt'
+
+    path_to_output = os.path.join(path_to_base, project_name)
+
+    list_keys = ['test_sacs_acc', 'test_sacs_f1score', 'test_sacs_auc', 'test_sacs_prauc']
+    log_analyzer(path_to_output, log_file, list_keys, x_key=None, es_epoch=None)

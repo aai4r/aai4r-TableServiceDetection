@@ -315,6 +315,11 @@ def collate_fn(batch):
 
     batch = list(zip(*batch))       # batch => [(in1, in2, in3), (tgt1, tgt2, tgt3)]
 
+    # # debug
+    # print('Hey: ', type(batch))     # list: batch => [([in11, in12], [in21, in22], [in31, in32]), (tgt1, tgt2, tgt3)]
+    # print(type(batch[0]))           # tuple: batch[0] => ([in11, in12], [in21, in22], [in31, in32]) or (in1, in2, in3)
+    # print(type(batch[0][0]))        # list or torch.Tensor: batch[0][0] => [in11, in12] or in1
+
     if isinstance(batch[0][0], list):
         batch[0] = [nested_tensor_from_tensor_list(item) for item in batch[0]]
     else:
