@@ -251,10 +251,14 @@ def evaluate_on_saclassifier(modelG, modelH, criterion, postprocessors, data_loa
 
 
 class SACEvaluator(object):
-    def __init__(self, num_classes, thresh=0.5):
+    def __init__(self, num_classes, thresholds=0.5):
         self.predictions = np.array([], dtype=np.float32).reshape(0, num_classes)
         self.groundtruths = np.array([], dtype=np.float32).reshape(0, num_classes)
-        self.thresh = thresh
+
+        if isinstance(thresholds, list):
+            self.thresholds = thresholds
+        else:
+            self.thresholds = [thresholds] * num_classes
 
     def update(self, predictions, groundtruths):
         # torch to numpy
@@ -287,7 +291,7 @@ class SACEvaluator(object):
                                          average_precision_score)
 
             ys_prob = torch.sigmoid(torch.Tensor(self.predictions))
-            ys_pred = ys_prob > self.thresh
+            # ys_pred = ys_prob > self.thresh
             ys_true = self.groundtruths
 
             list_acc = []   # accuracy
@@ -303,7 +307,7 @@ class SACEvaluator(object):
             num_classes = self.predictions.shape[1]
             for i_c in range(1, num_classes):
                 y_prob = ys_prob[:, i_c]
-                y_pred = ys_pred[:, i_c]
+                y_pred = y_prob > self.thresholds[i_c]
                 y_true = ys_true[:, i_c]
 
                 list_acc.append(accuracy_score(y_true, y_pred))     # accuracy
