@@ -66,8 +66,7 @@ class ServiceManager:
         # apply 'refill_food' prob by multiplying 'provide_dessert' prob
         # print('before: ', self.list_services[self.sname_to_index['refill_food']].prob)
         if duration_time_in_sec > self.list_services[self.sname_to_index['provide_dessert']].valid_time_provide_dessert:
-            scale_for_refill = 1. - self.list_services[self.sname_to_index['provide_dessert']].prob
-            rescaled_refill_food_prob = scale_for_refill * self.list_services[self.sname_to_index['refill_food']].prob
+            rescaled_refill_food_prob = 0.
             self.list_services[self.sname_to_index['refill_food']].set_prob(rescaled_refill_food_prob,
                                                                             duration_time_in_sec)
         # print('scale: ', scale_for_refill)

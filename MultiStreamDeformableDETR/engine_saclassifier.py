@@ -260,6 +260,8 @@ class SACEvaluator(object):
         else:
             self.thresholds = [thresholds] * num_classes
 
+        self.num_classes = num_classes
+
     def update(self, predictions, groundtruths):
         # torch to numpy
         self.predictions = np.concatenate([self.predictions, predictions.detach().cpu().numpy()], axis=0)
@@ -272,11 +274,12 @@ class SACEvaluator(object):
 
     def synchronize_between_processes(self):
         all_predictions = utils.all_gather(self.predictions)
-        all_groundtruths = utils.all_gather(self.groundtruths)
+        all_groundtruths = utils.all_gather(self.groundtruths)  # list of processes, each item has n_item x n_gts
 
-        merged_predictions = np.array([], dtype=np.float32).reshape(0, 3)
-        merged_groundtruths = np.array([], dtype=np.float32).reshape(0, 3)
-        for p, gt in zip(all_predictions, all_groundtruths):
+        merged_predictions = np.array([], dtype=np.float32).reshape(0, self.num_classes)
+        merged_groundtruths = np.array([], dtype=np.float32).reshape(0, self.num_classes)
+
+        for p, gt in zip(all_predictions, all_groundtruths):    # p, gt is a tensor (n_data, n_preds) from one process
             #merged_predictions += p
             merged_predictions = np.concatenate([merged_predictions, p], axis=0)
             merged_groundtruths = np.concatenate([merged_groundtruths, gt], axis=0)

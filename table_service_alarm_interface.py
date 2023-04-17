@@ -21,7 +21,7 @@ import torch
 import torchvision.transforms as T
 import torch.nn.functional as F
 from MultiStreamDeformableDETR.models import build_multioutput_multidataset_model_multitrfmModule as build_model
-from MultiStreamDeformableDETR.models.service_detector import build_SAclassifier
+from MultiStreamDeformableDETR.models.service_detector_v3 import build_SAclassifier
 import random
 import time
 from torchvision.ops import nms
@@ -62,9 +62,11 @@ class TableServiceAlarm:
             '--two_stage',
 
             '--num_classes_on_G', '21',
-            '--num_classes_on_H', '5',
-            # '--saclassifier_type', 'imageavgp_encv2avgp_pca1dlcnmsattnsimple',
-            '--saclassifier_type', 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimple',
+            # '--num_classes_on_H', '5',
+            # # '--saclassifier_type', 'imageavgp_encv2avgp_pca1dlcnmsattnsimple',
+            # '--saclassifier_type', 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimple',
+            '--num_classes_on_H', '9',
+            '--saclassifier_type', 'T5avgp_pca1dlcnmsattnsimple',
             '--num_prev_imgs', '9',
 
             '--processing_per_frames', '5',
@@ -418,6 +420,10 @@ class TableServiceAlarm:
 
                 print('processing time: ', time.time() - t0)
 
+                service_results[0] = max(service_results[0], service_results[4])
+                service_results[2] = max(service_results[2], service_results[5])
+                service_results = service_results[:4]
+
                 repr_service_index, repr_service_name = self.service_manager.process(service_results,
                                                                  current_time_in_seconds)
 
@@ -437,8 +443,9 @@ class TableServiceAlarmRequestHandler(object):
         self.list_service_name = ('no_service', 'refill_food', 'found_trash',
                                   'provide_dessert', 'found_lost')
         # self.list_service_threshold = (0.5, 0.5, 0.5, 0.73, 0.5)  # for captured1
-        self.list_service_threshold = (0.5, 0.5, 0.73, 0.73, 0.5)  # for captured2
+        # self.list_service_threshold = (0.5, 0.5, 0.73, 0.73, 0.5)  # for captured2
         # self.list_service_threshold = (0.5, 0.5, 0.51, 0.73, 0.5)  # for captured3
+        self.list_service_threshold = (0.5, 0.5, 0.5, 0.5, 0.5)
 
         self.tsa = TableServiceAlarm(model_path, list_service_name=self.list_service_name,
                                      list_service_threshold=self.list_service_threshold)

@@ -232,7 +232,8 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                  apply_nms_on_pca=False, apply_one_value_amount=False,
                  backbone_dim=1024, encoder_dim=256, roi_dim=256,
                  tbinder_type='bypass',
-                 final_layer_type='linear', num_MLP_final_layers=3):
+                 final_layer_type='linear', num_MLP_final_layers=3,
+                 abs_diff_feature=False):
 
         super().__init__()
         self.use_backbone = use_backbone
@@ -247,6 +248,7 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
         self.apply_btl_encoder = apply_btl_encoder
         self.apply_btl_roi = apply_btl_roi
         self.apply_one_value_amount = apply_one_value_amount
+        self.abs_diff_feature = abs_diff_feature
 
         self.no_value_for_pred = 0.
         self.no_value_for_amount = 1.   # v3, 0. -> 1.
@@ -376,9 +378,16 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
             # input feature per class
             self.tbinder = nn.ModuleList([TemporalBinder(num_feature=hidden_dim,
                                                          tbinder_type=tbinder_type) for _ in range(num_classes)])
+            if self.abs_diff_feature:
+                self.tbinder_diff = nn.ModuleList([TemporalBinder(num_feature=hidden_dim,
+                                                             tbinder_type=tbinder_type) for _ in
+                                              range(num_classes)])
         else:
             self.tbinder = TemporalBinder(num_feature=hidden_dim, num_output=num_classes,
                                           tbinder_type=tbinder_type)
+            if self.abs_diff_feature:
+                self.tbinder_diff = TemporalBinder(num_feature=hidden_dim, num_output=num_classes,
+                                              tbinder_type=tbinder_type)
 
         if self.use_backbone:
             print('\tbackbone_aggregate_type:', self.backbone_aggregate_type)
@@ -419,23 +428,27 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
             elif self.aggregate_type_enc == 'attn_simple':
                 self.attn_encoder = nn.ModuleList([nn.Linear(256, self.num_classes) for _ in range(self.num_trfm)])
 
+
+        if tbinder_type == 'tcn':
+            in_dim = 25 # 25 is nhid of tcn output node
+        else:
+            in_dim = hidden_dim
+
+        if self.abs_diff_feature:
+            in_dim = in_dim * 2
+
         if 'attn' in self.aggregate_type or 'attn' in tbinder_type:
             if self.final_layer_type == 'linear':
-                print(f'Final layer: {num_classes} linears {hidden_dim}x1')
-                self.service_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 1) for _ in range(num_classes)])    # each class has its own linear layer mapping hidden_dim to 1
+                print(f'Final layer: {num_classes} linears {in_dim}x1')
+                self.service_class_embed = nn.ModuleList([nn.Linear(in_dim, 1) for _ in range(num_classes)])    # each class has its own linear layer mapping hidden_dim to 1
             elif self.final_layer_type == 'MLP':
-                print(f'Final layer: {num_classes} MLP{num_MLP_final_layers} {hidden_dim}x1')
+                print(f'Final layer: {num_classes} MLP{num_MLP_final_layers} {in_dim}x1')
                 self.service_class_embed = nn.ModuleList([
-                    MLP(input_dim=hidden_dim, hidden_dim=hidden_dim,
+                    MLP(input_dim=in_dim, hidden_dim=in_dim,
                         output_dim=1, num_layers=num_MLP_final_layers) for _ in range(num_classes)])    # each class has its own linear layer mapping hidden_dim to 1
             else:
                 raise AssertionError('unsupported')
         else:
-            if tbinder_type == 'tcn':
-                in_dim = 25 # 25 is nhid of tcn output node
-            else:
-                in_dim = hidden_dim
-
             if self.final_layer_type == 'linear':
                 print(f'Final layer: linear {in_dim}x{num_classes}')
                 self.service_class_embed = nn.Linear(in_dim, num_classes)
@@ -499,7 +512,9 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
         pca_weights_amount_nz_index = None
         if self.use_pca:
             x_pred_logits = x['pred_logits']    # [n_batch, n_roi, 21]
-            x_pred_logits = torch.softmax(x_pred_logits, dim=2) # logit to probability
+            # x_pred_logits = torch.softmax(x_pred_logits, dim=2) # logit to probability
+            x_pred_logits = torch.sigmoid(x_pred_logits)
+
             # better place to select det_class
             if self.limit_det_class:
                 x_pred_logits = x_pred_logits[:, :, self.used_det_class]    # n_b(16), roi(1200), 21(det) > ", ", 10(det_selected)
@@ -888,8 +903,19 @@ class ImageEncoderROIAttBasedSAClassifier(ServiceAlarmClassifier):
                         list_attn_features.append(enc_memory_pool[i, :, :]) # n_batch, 256
 
                 x_cat = torch.cat(list_attn_features, dim=1)  # [n_batch, n_hid1+n_hid2+...]
-                x_cat = self.tbinder[i](x_cat)
-                list_output_scores.append(self.service_class_embed[i](x_cat))   # n_batch, 1
+                x_cat_temporal = self.tbinder[i](x_cat)
+
+                if self.abs_diff_feature:
+                    if x_cat.shape[0] == 1:
+                        x_cat_diff = x_cat
+                    else:
+                        # x_cat_diff = torch.diff(x_cat, dim=0)
+                        x_cat_diff = x_cat[1:] - x_cat[:-1]
+                        x_cat_diff = torch.abs(x_cat_diff)
+                    x_cat_diff_temporal = self.tbinder_diff[i](x_cat_diff)
+                    x_cat_temporal = torch.cat([x_cat_temporal, x_cat_diff_temporal], dim=1)
+
+                list_output_scores.append(self.service_class_embed[i](x_cat_temporal))   # n_batch, 1
 
             output_scores = torch.cat(list_output_scores,
                                       dim=1)  # list of [n_batch, 1] -> [n_batch, n_class]
@@ -1268,6 +1294,19 @@ def build_SAclassifier(num_classes, num_trfm, saclassifier_type='imagebased'):
                                                     apply_one_value_amount=True,
                                                     aggregate_type='attn_simple',
                                                     tbinder_type='avgpool')
+        postprocessors['bbox_attn'] = PostProcess()
+
+    elif saclassifier_type == 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimpleAbsdiff':
+        model = ImageEncoderROIAttBasedSAClassifier(num_classes, num_trfm, use_backbone=True,
+                                                    backbone_aggregate_type='avgpool',
+                                                    use_encoder=True, encoder_aggregate_type='avgpool',
+                                                    use_roi=False,
+                                                    use_pca=True, use_duration=True,
+                                                    limit_det_class=True, apply_nms_on_pca=True,
+                                                    apply_one_value_amount=True,
+                                                    aggregate_type='attn_simple',
+                                                    tbinder_type='avgpool',
+                                                    abs_diff_feature=True)
         postprocessors['bbox_attn'] = PostProcess()
 
     elif saclassifier_type == 'T5avgp_imageavgp_encv2avgp_pca1dlcmgnmsattnsimple':

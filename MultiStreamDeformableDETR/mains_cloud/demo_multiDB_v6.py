@@ -168,6 +168,7 @@ def get_args_parser():
                         nargs='*')  # + >=1, * >= 0
     parser.add_argument('--list_index_progress_trfm', default=[], type=int,
                         nargs='*')  # + >=1, * >= 0
+    parser.add_argument('--list_service_threshold', default=None, type=float, nargs='*')
 
     parser.add_argument('--save_result_image', action='store_true')
     parser.add_argument('--num_saved_results', default=20, type=int)
@@ -391,7 +392,16 @@ def main(args, imgs_dir=None, output_dir=None, cap_date=None):
     # filename_list = os.path.join(output_alarm_dir, 'output_list.txt')
     # fid = open(filename_list, 'w')
 
-    service_manager = ServiceManager(list_threshold=[0.0, 0.5, 0.5, 0.73, 0.5])
+    if args.num_classes_on_H == 9:
+        service_manager = ServiceManager(
+            list_service_name=('no_service',
+                               'refill_food', 'found_trash',
+                               'provide_dessert', 'found_lost',
+                               'refill_food_sup', 'provide_dessert_p10',
+                               'provide_dessert_10', 'provide_dessert_20'),
+            list_threshold=args.list_service_threshold)
+    else:
+        service_manager = ServiceManager(list_threshold=args.list_service_threshold)
 
     start_time_in_sec = get_start_time_by_date(cap_date)
     service_manager.set_start_time(start_time_in_sec)
@@ -738,6 +748,7 @@ if __name__ == '__main__':
 
         '--num_classes_on_G', '21',
         '--num_classes_on_H', '5',
+        '--list_service_threshold', '0.0', '0.5', '0.5', '0.73', '0.5',
         '--saclassifier_type', 'T5avgp_imageavgp_encv2avgp_pca1dlcnmsattnsimple',  # 'roiv2attnsimple', # 'roibased', #
         '--num_prev_imgs', '9',
 
