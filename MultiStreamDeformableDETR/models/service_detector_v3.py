@@ -637,7 +637,6 @@ class PostProcess(nn.Module):
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
 
-        print('pred and bbox')
         prob = out_logits.sigmoid()
         topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)
         scores = topk_values
@@ -653,7 +652,6 @@ class PostProcess(nn.Module):
 
         results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
 
-        print('results_sac')
         results_sac = {}
         if 'amount_score' in outputsG.keys():
             results_sac['amount_score'] = outputsG['amount_score'][:, topk_boxes[0], :]  # [1, 100, 50]
