@@ -221,31 +221,31 @@ class postprocessor():
 
         # four service scenarios
 
-        # 4) provide dessert
-        # process is 0.0 0.0 1.0 is lasting for 10 seconds
-        lasting_time = self.progresses['cap_times'][-1] - np.array(self.progresses['cap_times'])
-        over_duration = lasting_time >= self.alarm_duration_sec
-        over_duration_t_index = [ith for ith, item in enumerate(over_duration) if item]
-        if len(over_duration_t_index) > 0:
-            start_index = max(over_duration_t_index)
-            end_index = len(self.progresses['cap_times'])
-            num_progress_T = end_index - start_index + 1
-
-            progress_mat = self.progresses['probs'][start_index:end_index]
-            progress_prob_mean = np.mean(progress_mat, axis=1)
-
-            if progress_prob_mean[2] > 0.9 and num_progress_T > self.alarm_min_num_trk and max(
-                    lasting_time) > 10 * 60:
-
-                alarm_dessert = {
-                    'bboxes': [[0, 0, -1, -1]],
-                    'activate': True,
-                    'track_id': '1'
-                }
-                alarms['dessert'].append(alarm_dessert)
-            # else:
-            #     print('alarm dessert is not activate')
-            #     print()
+        # # 4) provide dessert
+        # # process is 0.0 0.0 1.0 is lasting for 10 seconds
+        # lasting_time = self.progresses['cap_times'][-1] - np.array(self.progresses['cap_times'])
+        # over_duration = lasting_time >= self.alarm_duration_sec
+        # over_duration_t_index = [ith for ith, item in enumerate(over_duration) if item]
+        # if len(over_duration_t_index) > 0:
+        #     start_index = max(over_duration_t_index)
+        #     end_index = len(self.progresses['cap_times'])
+        #     num_progress_T = end_index - start_index + 1
+        #
+        #     progress_mat = self.progresses['probs'][start_index:end_index]
+        #     progress_prob_mean = np.mean(progress_mat, axis=1)
+        #
+        #     if progress_prob_mean[2] > 0.9 and num_progress_T > self.alarm_min_num_trk \
+        #             and max(lasting_time) > 10 * 60:
+        #
+        #         alarm_dessert = {
+        #             'bboxes': [[0, 0, -1, -1]],
+        #             'activate': True,
+        #             'track_id': '1'
+        #         }
+        #         alarms['dessert'].append(alarm_dessert)
+        #     # else:
+        #     #     print('alarm dessert is not activate')
+        #     #     print()
 
         for trk in tracks:
             lasting_time = trk['cap_times'][-1] - np.array(trk['cap_times'])
@@ -270,7 +270,7 @@ class postprocessor():
                         # print('\tmax_fooddrink_amount_pred: {} > 0.0'.format(max_fooddrink_amount_pred))
 
                         if amount_pred_median < self.alarm_refill_amount and \
-                                amount_pred_last3 < self.alarm_refill_amount:
+                               amount_pred_last3 < self.alarm_refill_amount:
                                 # max_fooddrink_amount_pred > 0.0:
                             trk['refill_cue'] = {
                                 'amount_pred_median': amount_pred_median,
@@ -283,26 +283,26 @@ class postprocessor():
                     except:
                         print('exception is raised')
 
-                # 2) clean trash
-                if trk['rep_class'] in ['trash'] and over_duration.any() and num_trk_T > self.alarm_min_num_trk:
-                    trk['trash_cue'] = {
-                        'over_duration': over_duration,
-                        'num_trk_T': num_trk_T,
-                        'alarm_min_num_trk': self.alarm_min_num_trk
-                    }
-                    alarms['trash'].append(trk)
-
-                # 3) find lost belongings/things
-                if trk['rep_class'] in ['mobile_phone', 'wallet'] and over_duration.any() and \
-                        num_trk_T > self.alarm_min_num_trk:
-                    # TODO: yochin, check no person, check finish meals
-                    if progress_prob_mean[2] > 0.9:
-                        trk['lost_cue'] = {
-                            'over_duration': over_duration,
-                            'num_trk_T': num_trk_T,
-                            'progress_prob_mean': progress_prob_mean
-                        }
-                        alarms['lost'].append(trk)
+                # # 2) clean trash
+                # if trk['rep_class'] in ['trash'] and over_duration.any() and num_trk_T > self.alarm_min_num_trk:
+                #     trk['trash_cue'] = {
+                #         'over_duration': over_duration,
+                #         'num_trk_T': num_trk_T,
+                #         'alarm_min_num_trk': self.alarm_min_num_trk
+                #     }
+                #     alarms['trash'].append(trk)
+                #
+                # # 3) find lost belongings/things
+                # if trk['rep_class'] in ['mobile_phone', 'wallet'] and over_duration.any() and \
+                #         num_trk_T > self.alarm_min_num_trk:
+                #     # TODO: yochin, check no person, check finish meals
+                #     if progress_prob_mean[2] > 0.9:
+                #         trk['lost_cue'] = {
+                #             'over_duration': over_duration,
+                #             'num_trk_T': num_trk_T,
+                #             'progress_prob_mean': progress_prob_mean
+                #         }
+                #         alarms['lost'].append(trk)
 
         return alarms
 

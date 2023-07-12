@@ -172,7 +172,8 @@ def track_viou_1by1(detections_frame, frame, frame_num,
                         if track in tracks_finished:    # dict is managed as ref. check id(variable)
                             del tracks_finished[tracks_finished.index(track)]
                     except:
-                        pdb.set_trace()
+                        pass
+
                     updated_tracks.append(track)
 
                     finished = True

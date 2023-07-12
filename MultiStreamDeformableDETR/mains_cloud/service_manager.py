@@ -25,9 +25,9 @@ class ServiceInfo:
             self.current_decision = False
 
     def check_limits(self):
-        if self.service_name == 'provide_dessert':
-            if self.current_secs <= self.valid_time_provide_dessert:
-                self.current_decision = False
+        # if self.service_name == 'provide_dessert':
+        #     if self.current_secs <= self.valid_time_provide_dessert:
+        #         self.current_decision = False
 
         if self.current_secs - self.last_activated_secs <= self.re_active_limit_secs:
             self.current_decision = False
@@ -74,9 +74,9 @@ class ServiceManager:
 
         # print('current status of service_manager')
 
-        # # check limits
-        # for ith in range(len(pred_service_prob)):
-        #     self.list_services[ith+1].check_limits()
+        # check limits
+        for ith in range(len(pred_service_prob)):
+            self.list_services[ith+1].check_limits()
 
         # return only-one service with max prob
         ret_max_prob = -1

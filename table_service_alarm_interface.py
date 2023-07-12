@@ -497,6 +497,14 @@ class TableServiceAlarm:
                         #                                                     scores=c_attn_val,
                         #                                                     vis_th=0.01)
 
+                    if False:
+                        for i_trk in tracks_dup:
+                            i_trk_x1, i_trk_y1, i_trk_x2, i_trk_y2 = i_trk['bboxes'][-1]
+
+                            draw.text((i_trk_x1, i_trk_y1), i_trk['classes'][-1])
+                            draw.rectangle(((i_trk_x1, i_trk_y1), (i_trk_x2, i_trk_y2)),
+                                           outline='white', width=1)
+
                     print('processing time: ', time.time() - t0)
 
                     service_results[0] = max(service_results[0], service_results[4])
@@ -634,7 +642,7 @@ if __name__ == '__main__':
         if im2show is not None:
             # im2show.save(f'vis/{image_filename}')
             im2show.save(f'/home/yochin/GoogleDrive/sanji/vis/{image_filename}')
-            shutil.move(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
-                         f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
+            # shutil.move(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
+            #              f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
 
     print('TableServiceAlarmRequestHandler request is processed!')
