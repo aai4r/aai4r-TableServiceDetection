@@ -340,53 +340,57 @@ class TableServiceAlarm:
                 im_min = (duration_seconds - im_hrs*3600) // 60
                 im_sec = duration_seconds - im_hrs*3600 - im_min*60
 
-                labels = torch.cat(filtered_labels, dim=0)
-                scores = torch.cat(filtered_scores, dim=0)
-                boxes = torch.cat(filtered_boxes, dim=0)
-                amount_pred = torch.cat(filtered_amount_pred, dim=0)
-                amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)
-
-                det_trkform = det_to_trk(labels, scores, boxes, amount_pred, amount_pred_weighted,
-                                         index_to_classname=self.pps.class_names,
-                                         cap_time=[im_hrs, im_min, im_sec])
-                im_np = np.asarray(im.convert('L'))
-                tracks = self.pps.process(detections=det_trkform, frame=im_np)
-                tracks_dup = [{key: value for key, value in item.items() if key != 'visual_tracker'}
-                              for item in tracks]
-                alarms = self.pps.check_alarm(tracks=tracks_dup, progress_prob=progress_prob,
-                                         cap_time=[im_hrs, im_min, im_sec])
-                # self.pps.remove_over_trk(cap_time=[im_hrs, im_min, im_sec],
-                #                     th_over_duration_in_sec=self.pps.alarm_duration_sec)
-                len_alive_info = 30
-                for list_tracks in [self.pps.tracks_active, self.pps.tracks_finished, self.pps.tracks_extendable]:
-                    for i_tk, trk in enumerate(list_tracks):
-                        print(len(trk['bboxes']))
-                        if trk['det_counter'] > len_alive_info:
-                            th_cap_time = sorted(trk['cap_times'], reverse=True)[len_alive_info-1]
-
-                            del_idxes = np.where(np.array(trk['cap_times']) < th_cap_time)[0]
-                            trk['det_counter'] -= len(del_idxes)
-                            for d_i in sorted(del_idxes, reverse=True):
-                                del trk['bboxes'][d_i]
-                                del trk['amount_pred'][d_i]
-                                del trk['amount_pred_w'][d_i]
-                                del trk['classes'][d_i]
-                                del trk['cap_times'][d_i]
-                            # trk['start_frame']
-
-                if len(alarms['refill']) > 0:
-                    service_results[0] = 1.0
-                # end temporary saclassifier
-
                 repr_service_index = -1
                 repr_service_name = 'none'
                 detection_results = []
 
                 if len(filtered_labels) > 0:
-                    labels = torch.cat(filtered_labels, dim=0)  # [n_bboxes]
+                    # labels = torch.cat(filtered_labels, dim=0)  # [n_bboxes]
+                    # scores = torch.cat(filtered_scores, dim=0)
+                    # boxes = torch.cat(filtered_boxes, dim=0)
+                    # amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)  # [n_bboxes]
+
+                    labels = torch.cat(filtered_labels, dim=0)
                     scores = torch.cat(filtered_scores, dim=0)
                     boxes = torch.cat(filtered_boxes, dim=0)
-                    amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)  # [n_bboxes]
+                    amount_pred = torch.cat(filtered_amount_pred, dim=0)
+                    amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)
+
+                    det_trkform = det_to_trk(labels, scores, boxes, amount_pred,
+                                             amount_pred_weighted,
+                                             index_to_classname=self.pps.class_names,
+                                             cap_time=[im_hrs, im_min, im_sec])
+                    im_np = np.asarray(im.convert('L'))
+                    tracks = self.pps.process(detections=det_trkform, frame=im_np)
+                    tracks_dup = [
+                        {key: value for key, value in item.items() if key != 'visual_tracker'}
+                        for item in tracks]
+                    alarms = self.pps.check_alarm(tracks=tracks_dup, progress_prob=progress_prob,
+                                                  cap_time=[im_hrs, im_min, im_sec])
+                    # self.pps.remove_over_trk(cap_time=[im_hrs, im_min, im_sec],
+                    #                     th_over_duration_in_sec=self.pps.alarm_duration_sec)
+                    len_alive_info = 30
+                    for list_tracks in [self.pps.tracks_active, self.pps.tracks_finished,
+                                        self.pps.tracks_extendable]:
+                        for i_tk, trk in enumerate(list_tracks):
+                            print(len(trk['bboxes']))
+                            if trk['det_counter'] > len_alive_info:
+                                th_cap_time = sorted(trk['cap_times'], reverse=True)[
+                                    len_alive_info - 1]
+
+                                del_idxes = np.where(np.array(trk['cap_times']) < th_cap_time)[0]
+                                trk['det_counter'] -= len(del_idxes)
+                                for d_i in sorted(del_idxes, reverse=True):
+                                    del trk['bboxes'][d_i]
+                                    del trk['amount_pred'][d_i]
+                                    del trk['amount_pred_w'][d_i]
+                                    del trk['classes'][d_i]
+                                    del trk['cap_times'][d_i]
+                                # trk['start_frame']
+
+                    if len(alarms['refill']) > 0:
+                        service_results[0] = 1.0
+                    # end temporary saclassifier
 
                     for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in enumerate(
                             zip(labels.tolist(), scores.tolist(), boxes.tolist(),
@@ -630,7 +634,7 @@ if __name__ == '__main__':
         if im2show is not None:
             # im2show.save(f'vis/{image_filename}')
             im2show.save(f'/home/yochin/GoogleDrive/sanji/vis/{image_filename}')
-            shutil.copy2(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
+            shutil.move(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
                          f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
 
     print('TableServiceAlarmRequestHandler request is processed!')

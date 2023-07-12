@@ -258,18 +258,24 @@ class postprocessor():
                 num_trk_T = end_index - start_index + 1
 
                 # 1) refill dishes
-                if trk['rep_class'] in ['dish'] and num_trk_T > self.alarm_min_num_trk:
+                if trk['rep_class'] in ['dish', 'cup'] and num_trk_T > self.alarm_min_num_trk:
                     try:
                         amount_pred_median = statistics.median(trk['fooddrink_amount_pred'][start_index:end_index])
                         amount_pred_last3 = statistics.mean(trk['fooddrink_amount_pred'][start_index:end_index][-3:])
-                        max_fooddrink_amount_pred = max(trk['fooddrink_amount_pred'])
+                        # max_fooddrink_amount_pred = max(trk['fooddrink_amount_pred'])
+
+                        print('{}: \n'.format(trk['rep_class']))
+                        print('\tamount_pred_median: {} < {}'.format(amount_pred_median, self.alarm_refill_amount))
+                        print('\tamount_pred_last3: {} < {}'.format(amount_pred_last3, self.alarm_refill_amount))
+                        # print('\tmax_fooddrink_amount_pred: {} > 0.0'.format(max_fooddrink_amount_pred))
+
                         if amount_pred_median < self.alarm_refill_amount and \
-                                amount_pred_last3 < self.alarm_refill_amount and \
-                                max_fooddrink_amount_pred > 0.0:
+                                amount_pred_last3 < self.alarm_refill_amount:
+                                # max_fooddrink_amount_pred > 0.0:
                             trk['refill_cue'] = {
                                 'amount_pred_median': amount_pred_median,
                                 'amount_pred_last3': amount_pred_last3,
-                                'max_fooddrink_amount_pred': max_fooddrink_amount_pred,
+                                # 'max_fooddrink_amount_pred': max_fooddrink_amount_pred,
                                 'start_index': start_index,
                                 'end_index': end_index
                             }
