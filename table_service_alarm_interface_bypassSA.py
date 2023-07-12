@@ -29,6 +29,7 @@ from MultiStreamDeformableDETR.engine_saclassifier import get_duration_norm
 from MultiStreamDeformableDETR.my_debug import draw_bboxes_on_pil
 from MultiStreamDeformableDETR.mains_cloud.service_manager import ServiceManager
 from MultiStreamDeformableDETR.mains_cloud.demo_postproc import postprocessor, det_to_trk
+import shutil
 
 class TableServiceAlarm:
     def __init__(self, model_path, list_service_name=('no_service', 'refill_food', 'found_trash',
@@ -458,8 +459,8 @@ class TableServiceAlarm:
                                                             'amt_med:{}\namt_l3:{}'.format(item['refill_cue']['amount_pred_median'], item['refill_cue']['amount_pred_last3']),
                                                             fill='white', spacing=2)
 
-                        # draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white',
-                        #                     spacing=2)
+                        draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white',
+                                            spacing=2)
 
 
                         # # draw the attention
@@ -591,7 +592,8 @@ if __name__ == '__main__':
     #     im2show.save('imgurl_debug_image.jpg')
 
     # Image sequence test
-    path_to_files = f'/home/yochin/Desktop/TableServiceDetector/examples4'
+    # path_to_files = f'/home/yochin/Desktop/TableServiceDetector/examples4'
+    path_to_files = f'/home/yochin/GoogleDrive/sanji/input'
     list_files = [f for f in os.listdir(path_to_files) if
                   os.path.isfile(os.path.join(path_to_files, f))]
     list_files = sorted(list_files)
@@ -604,7 +606,7 @@ if __name__ == '__main__':
         ipl_img = Image.open(path_to_image).convert('RGB')  # read as rgb
         ipl_img = ImageOps.exif_transpose(ipl_img)
 
-        duration_time_in_sec = 300 + ith
+        duration_time_in_sec = 0 + ith
         detection_results, service_results, repr_service_index, repr_service_name, im2show = \
             handler.process_inference_request(ipl_img, duration_time_in_sec)  # request
         # detection_results, service_results, rep_service_name, im2show = \
@@ -626,6 +628,9 @@ if __name__ == '__main__':
 
         # 5. Save the result image
         if im2show is not None:
-            im2show.save(f'vis/{image_filename}')
+            # im2show.save(f'vis/{image_filename}')
+            im2show.save(f'/home/yochin/GoogleDrive/sanji/vis/{image_filename}')
+            shutil.copy2(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
+                         f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
 
     print('TableServiceAlarmRequestHandler request is processed!')
