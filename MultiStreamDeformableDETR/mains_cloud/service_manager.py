@@ -10,7 +10,7 @@ class ServiceInfo:
         self.current_decision = False
         self.current_secs = -1
 
-        self.re_active_limit_secs = 60 * 5
+        self.re_active_limit_secs = 60 * 2
         self.valid_time_provide_dessert = 60 * 15
 
         self.last_activated_secs = -self.re_active_limit_secs
@@ -30,6 +30,9 @@ class ServiceInfo:
         #         self.current_decision = False
 
         if self.current_secs - self.last_activated_secs <= self.re_active_limit_secs:
+            # if self.current_decision:
+            #     print('current_decision is True, but changed to False by last act rule')
+
             self.current_decision = False
 
     def update(self):
@@ -57,7 +60,8 @@ class ServiceManager:
 
     def process(self, pred_service_prob, current_time_in_sec):
         duration_time_in_sec = current_time_in_sec - self.start_time_in_sec
-        # put and decide
+
+        # set prob. and T/F over threshold
         self.list_services[self.sname_to_index['no_service']].set_prob(1. - max(pred_service_prob), duration_time_in_sec)
         for ith, ith_service in enumerate(self.list_services[1:]):
             ith_service.set_prob(pred_service_prob[ith], duration_time_in_sec)  # set prob and get a decision
@@ -74,7 +78,7 @@ class ServiceManager:
 
         # print('current status of service_manager')
 
-        # check limits
+        # check limits, change to F if T is in limited_times (5min)
         for ith in range(len(pred_service_prob)):
             self.list_services[ith+1].check_limits()
 

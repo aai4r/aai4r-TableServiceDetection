@@ -2,14 +2,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-# interface
-import pdb
-
 import requests
 import json
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageFont
 from io import BytesIO
-import numpy as np
 
 # model
 import _init_paths
@@ -17,24 +13,30 @@ import os
 import argparse
 from MultiStreamDeformableDETR.mains_cloud.demo_multiDB_v6 import get_args_parser
 from MultiStreamDeformableDETR.mains_cloud.service_manager import ServiceManager
-from MultiStreamDeformableDETR.mains_cloud.demo_postproc import postprocessor, det_to_trk
 import MultiStreamDeformableDETR.util.misc as utils
 import torch
 import torchvision.transforms as T
 import torch.nn.functional as F
 from MultiStreamDeformableDETR.models import build_multioutput_multidataset_model_multitrfmModule as build_model
 from MultiStreamDeformableDETR.models.service_detector_v3 import build_SAclassifier
-import random
-import time
-from torchvision.ops import nms
+from MultiStreamDeformableDETR.mains_cloud.service_alarm_movavg import table_service_alarm_movavg
 from MultiStreamDeformableDETR.engine_saclassifier import get_duration_norm
 from MultiStreamDeformableDETR.my_debug import draw_bboxes_on_pil
+import time
+from torchvision.ops import nms
+import random
+
 import shutil
+import numpy as np
+import pdb
+
+# without tracker, use rule-based but the moving average to find the service alarm
 
 class TableServiceAlarm:
     def __init__(self, model_path, list_service_name=('no_service', 'refill_food', 'found_trash',
                                                       'provide_dessert', 'found_lost'),
                  list_service_threshold=None):
+        self.alarm_avg = table_service_alarm_movavg()
         # setup arguments
         self.start_time_in_seconds = None
         self.list_img_seq = []
@@ -103,7 +105,6 @@ class TableServiceAlarm:
             classes = f.readlines()
             classes = [line.rstrip('\n') for line in classes]
         print(classes)
-        self.pps = postprocessor(target_class_list=args.display_class_names, class_names=classes)
 
         print('Load from resume_on_G_and_H')
         checkpoint = torch.load(args.resume, map_location='cpu')
@@ -149,13 +150,14 @@ class TableServiceAlarm:
         print(self.sac_classes)
 
         number_of_colors = len(classes)
-        self.list_colors = ["#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
-                       for i in range(number_of_colors)]
+        # self.list_colors = ["#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+        #                for i in range(number_of_colors)]
+        self.list_colors = ['#FF0000'] * 100
 
         # function
         self.transform_resize = T.Compose([
-            T.Resize(1000)
             # T.Resize(1376)
+            T.Resize(1000)
             # T.Resize(800)
         ])
 
@@ -209,10 +211,12 @@ class TableServiceAlarm:
                 service_results = []
                 repr_service_index = -1
                 repr_service_name = 'no_service'
+
                 if draw_result:
                     source_img = im.convert("RGB")  # im == cropped image in PIL.Image type
                 else:
                     source_img = None
+
                 return detection_results, service_results, repr_service_index, repr_service_name, source_img
             else:
                 # print('TableServiceAlarm.detect: process the img_seq',
@@ -281,8 +285,8 @@ class TableServiceAlarm:
                     out_progress_score = outputs['progress_score']
                     progress_prob = F.softmax(out_progress_score[0, :], dim=0)
 
-                num_topk_vis_th = sum(keep).item()
-                print(f'{num_topk_vis_th} bboxes are selected > {self.vis_th}')
+                # num_topk_vis_th = sum(keep).item()
+                # print(f'{num_topk_vis_th} bboxes are selected > {self.vis_th}')
 
                 # NMS among transformers
                 filtered_labels = []
@@ -323,79 +327,54 @@ class TableServiceAlarm:
                         filtered_amount_pred_weighted.append(
                             cls_amount_pred_w[keep.view(-1).long()])
 
-                if draw_result:
-                    source_img = im.convert("RGB")  # im == cropped image in PIL.Image type
-                    draw = ImageDraw.Draw(source_img)
-                else:
-                    source_img = None
-
-                # temporary saclassifer
-                # service_results = torch.sigmoid(outputsH['service_pred_logits'])[0,
-                #                   1:].detach().cpu()
-                # service_results = [item.item() for item in service_results]
-
-                # service_results[0]: refill
-                service_results = [0.] * 8     # reset
-                im_hrs = duration_seconds // 3600
-                im_min = (duration_seconds - im_hrs*3600) // 60
-                im_sec = duration_seconds - im_hrs*3600 - im_min*60
-
-                repr_service_index = -1
-                repr_service_name = 'none'
-                detection_results = []
-
                 if len(filtered_labels) > 0:
-                    # labels = torch.cat(filtered_labels, dim=0)  # [n_bboxes]
-                    # scores = torch.cat(filtered_scores, dim=0)
-                    # boxes = torch.cat(filtered_boxes, dim=0)
-                    # amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)  # [n_bboxes]
-
                     labels = torch.cat(filtered_labels, dim=0)
                     scores = torch.cat(filtered_scores, dim=0)
                     boxes = torch.cat(filtered_boxes, dim=0)
-                    amount_pred = torch.cat(filtered_amount_pred, dim=0)
-                    amount_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)
+                    # amount_pred = torch.cat(filtered_amount_pred, dim=0)
+                    amounts_pred_weighted = torch.cat(filtered_amount_pred_weighted, dim=0)
 
-                    det_trkform = det_to_trk(labels, scores, boxes, amount_pred,
-                                             amount_pred_weighted,
-                                             index_to_classname=self.pps.class_names,
-                                             cap_time=[im_hrs, im_min, im_sec])
-                    im_np = np.asarray(im.convert('L'))
-                    tracks = self.pps.process(detections=det_trkform, frame=im_np)
-                    tracks_dup = [
-                        {key: value for key, value in item.items() if key != 'visual_tracker'}
-                        for item in tracks]
-                    alarms = self.pps.check_alarm(tracks=tracks_dup, progress_prob=progress_prob,
-                                                  cap_time=[im_hrs, im_min, im_sec])
-                    # self.pps.remove_over_trk(cap_time=[im_hrs, im_min, im_sec],
-                    #                     th_over_duration_in_sec=self.pps.alarm_duration_sec)
-                    len_alive_info = 30
-                    for list_tracks in [self.pps.tracks_active, self.pps.tracks_finished,
-                                        self.pps.tracks_extendable]:
-                        for i_tk, trk in enumerate(list_tracks):
-                            print(len(trk['bboxes']))
-                            if trk['det_counter'] > len_alive_info:
-                                th_cap_time = sorted(trk['cap_times'], reverse=True)[
-                                    len_alive_info - 1]
+                    labels = labels.tolist()
+                    scores = scores.tolist()
+                    boxes = boxes.tolist()
+                    amounts_pred_weighted = amounts_pred_weighted.tolist()
+                else:
+                    labels = []
+                    scores = []
+                    boxes = []
+                    amounts_pred_weighted = []
 
-                                del_idxes = np.where(np.array(trk['cap_times']) < th_cap_time)[0]
-                                trk['det_counter'] -= len(del_idxes)
-                                for d_i in sorted(del_idxes, reverse=True):
-                                    del trk['bboxes'][d_i]
-                                    del trk['amount_pred'][d_i]
-                                    del trk['amount_pred_w'][d_i]
-                                    del trk['classes'][d_i]
-                                    del trk['cap_times'][d_i]
-                                # trk['start_frame']
+                service_results = self.alarm_avg.process(labels, scores, boxes,
+                                                         amounts_pred_weighted, self.classes)
+                # end temporary saclassifier
 
-                    if len(alarms['refill']) > 0:
-                        service_results[0] = 1.0
-                    # end temporary saclassifier
+                # put the results in the detection_results for return
+                detection_results = []
+                for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in \
+                        enumerate(zip(labels, scores, boxes, amounts_pred_weighted)):
+                    label_index = label - 1  # background is in label, but not in label_index
 
-                    for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in enumerate(
-                            zip(labels.tolist(), scores.tolist(), boxes.tolist(),
-                                amount_pred_weighted.tolist())):
+                    xmin = int(xmin)
+                    ymin = int(ymin)
+                    xmax = int(xmax)
+                    ymax = int(ymax)
+                    detection_results.append([xmin, ymin, xmax, ymax, label_index])
 
+                if not draw_result:
+                    source_img = None
+                else:       # if draw_result:
+                    source_img = im.convert("RGB")  # im == cropped image in PIL.Image type
+                    draw = ImageDraw.Draw(source_img)
+
+                    fontsize = round(min(source_img.size) / 40)
+                    try:
+                        font = ImageFont.truetype('arial.ttf', fontsize)
+                    except:
+                        font = None
+
+                    # draw detection results, bbox, label_name, amounts
+                    for ith, (label, score, (xmin, ymin, xmax, ymax), amount_pred_weighted) in \
+                            enumerate(zip(labels, scores, boxes, amounts_pred_weighted)):
                         label_index = label - 1  # background is in label, but not in label_index
                         class_name = self.classes[label_index]
 
@@ -403,124 +382,80 @@ class TableServiceAlarm:
                         ymin = int(ymin)
                         xmax = int(xmax)
                         ymax = int(ymax)
-                        detection_results.append([xmin, ymin, xmax, ymax, label_index])
 
-                        if draw_result:
-                            if class_name in self.args.display_class_names:
-                                if class_name in ['food', 'drink']: # 'dish', 'cup'
-                                    pass
-                                else:
-                                    amount_pred_weighted = None
+                        if class_name in self.args.display_class_names:
+                            if class_name in ['food', 'drink']: # 'dish', 'cup'
+                                pass
+                            else:
+                                amount_pred_weighted = None
 
-                                if self.args.use_amount and amount_pred_weighted is not None:
-                                    # str_result = '%s (%.1f) \nam: %.0f' % (class_name, score,
-                                    #                                        amount_pred_weighted * 100)
-                                    str_result = '%s (%.0f)' % (class_name, amount_pred_weighted * 100)
+                            if self.args.use_amount and amount_pred_weighted is not None:
+                                # str_result = '%s (%.1f) \nam: %.0f' % (class_name, score,
+                                #                                        amount_pred_weighted * 100)
+                                str_result = '%s (%.0f)' % (class_name, amount_pred_weighted * 100)
 
-                                    # # draw bar graph
-                                    # if class_name in ['dish', 'cup']:
-                                    #     draw.rectangle([xmin, ymin - 10,
-                                    #                     xmin + (xmax - xmin) * amount_pred_weighted, ymin - 5],
-                                    #                    fill=self.list_colors[label_index], width=2)
-                                else:
-                                    # str_result = '%s (%.1f)' % (class_name, score)
-                                    str_result = '%s' % (class_name)
+                                # # draw bar graph
+                                # if class_name in ['dish', 'cup']:
+                                #     draw.rectangle([xmin, ymin - 10,
+                                #                     xmin + (xmax - xmin) * amount_pred_weighted, ymin - 5],
+                                #                    fill=self.list_colors[label_index], width=2)
+                            else:
+                                # str_result = '%s (%.1f)' % (class_name, score)
+                                str_result = '%s' % (class_name)
 
-                                draw.multiline_text((xmin, ymin), str_result, fill=self.list_colors[label_index],
-                                                    spacing=2)
+                            draw.multiline_text((xmin, ymin), str_result, fill=self.list_colors[label_index],
+                                                spacing=2, font=font)
+                            draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=self.list_colors[label_index],
+                                           width=2)
 
-                                draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=self.list_colors[label_index],
-                                               width=2)
+                    # draw progress info
+                    if self.args.use_progress:
+                        # draw.text((10, 10), '%d' % topk_index_progress.item())
+                        draw.text((10, 10), 'progress: %.1f, %.1f, %.1f' %
+                                  (progress_prob[0], progress_prob[1], progress_prob[2]),
+                                  font=font)
 
-                    if draw_result:
-                        # draw only one in one image
-                        if self.args.use_progress:
-                            # draw.text((10, 10), '%d' % topk_index_progress.item())
-                            draw.text((10, 10), 'progress: %.1f, %.1f, %.1f' %
-                                      (progress_prob[0], progress_prob[1], progress_prob[2]))
+                print('processing time: ', time.time() - t0)
 
-                        # # draw saclass predictions
-                        # unscaled_boxes = torch.tensor([[10, 1 + 20, 10, 21], [10, 21 + 20, 10, 41],
-                        #                                [10, 41 + 20, 10, 61], [10, 61 + 20, 10, 81]])
-                        # res_scores = torch.sigmoid(outputsH['service_pred_logits'])[0, 1:].detach().cpu()
-                        # source_img = draw_bboxes_on_pil(source_img, unscaled_boxes, self.sac_classes,
-                        #                                 scores=res_scores,
-                        #                                 vis_th=0.0, no_bbox=True)
-                        #
-                        # draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white', spacing=2)
-
-                        # draw alarm predictions
-                        str_alarms = []
-                        for key, values in alarms.items():
-                            if len(values) > 0:
-                                str_alarms.append(f'{key}')
-                                if key in ['refill']:
-                                    for item in values:
-                                        xmin, ymin, xmax, ymax = item['bboxes'][-1]
-                                        draw.rectangle(((xmin, ymin), (xmax, ymax)), outline='red',
-                                                       width=2)
-                                        draw.multiline_text((xmin, ymin),
-                                                            'amt_med:{}\namt_l3:{}'.format(item['refill_cue']['amount_pred_median'], item['refill_cue']['amount_pred_last3']),
-                                                            fill='white', spacing=2)
-
-                        draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='white',
-                                            spacing=2)
+                repr_service_index, repr_service_name = self.service_manager.process(service_results,
+                                                                 current_time_in_seconds)
 
 
-                        # # draw the attention
-                        # if 'bbox_attn' in self.postprocessors.keys():
-                        #     # resultsH['hs_attn_values']  # n_b, n_class-1, topk(3)
-                        #     # resultsH['hs_attn_bbox']    # n_b, n_class-1, topk(3), 4
-                        #
-                        #     list_attn = [
-                        #         ['hs_attn_values', 'hs_attn_bbox'],
-                        #         ['enc_attn_values', 'enc_attn_bbox'],
-                        #         ['pca_bbox_attn_values', 'pca_bbox_attn_bbox'],
-                        #         ['pca_amount_attn_values', 'pca_amount_attn_bbox'],
-                        #     ]
-                        #
-                        #     for key_attn_value, key_attn_bbox in list_attn:
-                        #         if key_attn_value in resultsH:
-                        #             attn_value = resultsH[key_attn_value][0]  # [4, 3] = [n_class,
-                        #             attn_bbox = resultsH[key_attn_bbox][0]  # [4, 3, 4]
-                        #
-                        #             for i_c in range(attn_bbox.shape[0]):
-                        #                 if res_scores[i_c] >= 0.5:      # services having more than 50 percentages
-                        #                     c_attn_bbox = attn_bbox[i_c, :, :]
-                        #                     c_attn_val = attn_value[i_c, :]
-                        #                     # keep = nms(c_attn_bbox, c_attn_val, 0.3)  #
-                        #                     # c_attn_bbox = c_attn_bbox[keep]
-                        #                     # c_attn_val = c_attn_val[keep]
-                        #                     source_img = draw_bboxes_on_pil(source_img,
-                        #                                                     c_attn_bbox,
-                        #                                                     [i_c] * 100,        # labels
-                        #                                                     scores=c_attn_val,
-                        #                                                     vis_th=0.01)
+                # service_results, limiting float to two decimal points
+                service_results = [round(item, 4) for item in service_results]
 
-                    if False:
-                        for i_trk in tracks_dup:
-                            i_trk_x1, i_trk_y1, i_trk_x2, i_trk_y2 = i_trk['bboxes'][-1]
+                if draw_result:
+                    # # draw alarm predictions (bbox)
+                    # str_alarms = []
+                    # for key, values in alarms.items():
+                    #     if len(values) > 0:
+                    #         str_alarms.append(f'{key}')
+                    #         if key in ['refill']:
+                    #             for item in values:
+                    #                 xmin, ymin, xmax, ymax = item['bboxes'][-1]
+                    #                 draw.rectangle(((xmin, ymin), (xmax, ymax)), outline='blue',
+                    #                                width=2)
+                    #                 draw.multiline_text((xmin, ymax),
+                    #                                     'amt_med:{}\namt_l3:{}'.format(item['refill_cue']['amount_pred_median'], item['refill_cue']['amount_pred_last3']),
+                    #                                     fill='blue', spacing=2, font=font)
+                    #
+                    # # draw alarm predictions
+                    # draw.multiline_text((10, 25), '\n'.join(str_alarms), fill='blue',
+                    #                     spacing=2, font=font)
 
-                            draw.text((i_trk_x1, i_trk_y1), i_trk['classes'][-1])
-                            draw.rectangle(((i_trk_x1, i_trk_y1), (i_trk_x2, i_trk_y2)),
-                                           outline='white', width=1)
+                    draw.text((10, 40), f'process_out: {service_results}', font=font)
+                    draw.text((10, 70), f'request_out: {repr_service_name}', font=font)
 
-                    print('processing time: ', time.time() - t0)
+                if draw_result:
+                    g_x = list(range(250, 250 + self.alarm_avg.max_len))
+                    g_y_offset = 10
+                    for g_i, g_name in enumerate(['food', 'drink', 'dish', 'cup']):
+                        g_y_offset += (g_i * 30)
+                        g_y_prev = [item+g_y_offset for item in self.alarm_avg.list_prev_avg[g_name]]
+                        g_y_cur = [item + g_y_offset for item in self.alarm_avg.list_cur_avg[g_name]]
+                        draw.line(list(zip(g_x[:len(g_y_prev)], g_y_prev)), fill='red', width=2)
+                        draw.line(list(zip(g_x[:len(g_y_prev)], g_y_cur)), fill='blue', width=2)
 
-                    service_results[0] = max(service_results[0], service_results[4])
-                    service_results[2] = max(service_results[2], service_results[5])
-                    service_results = service_results[:4]
-
-                    repr_service_index, repr_service_name = self.service_manager.process(service_results,
-                                                                     current_time_in_seconds)
-
-                    # print('repr_service: ', repr_service_index, repr_service_name)
-
-                    # if draw_result:
-                    #     draw.text((10, 150), f'repr_service: {repr_service_index}, {repr_service_name}')
-
-                    # service_results, limiting float to two decimal points
-                    service_results = [round(item, 4) for item in service_results]
 
             return detection_results, service_results, repr_service_index, repr_service_name, source_img
 
@@ -548,7 +483,8 @@ class TableServiceAlarmRequestHandler(object):
         # - ex) result = [[100,100,200,200,154], [200,300,200,300,12]]
         # - service_result is a list of four service possible time (food refill, trash collection, serving dessert, lost item)
         # - ex) result = [0.7, 0.1, 0.1, 0.2]
-        detection_results, service_results, repr_service_index, rep_service_name, vis_img = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
+        detection_results, service_results, repr_service_index, rep_service_name, vis_img \
+            = self.tsa.detect(ipl_img, current_time_in_seconds, draw_result=True)
 
         return detection_results, service_results, repr_service_index, rep_service_name, vis_img
 
@@ -605,44 +541,60 @@ if __name__ == '__main__':
 
     # Image sequence test
     # path_to_files = f'/home/yochin/Desktop/TableServiceDetector/examples4'
-    path_to_files = f'/home/yochin/GoogleDrive/sanji/input'
-    list_files = [f for f in os.listdir(path_to_files) if
-                  os.path.isfile(os.path.join(path_to_files, f))]
-    list_files = sorted(list_files)
-    for ith, image_filename in enumerate(list_files):
-        # 3. Give an image and get the results
-        path_to_image = os.path.join(path_to_files, image_filename)
-        if not os.path.exists(path_to_image):
-            continue
+    # path_to_files = f'/home/yochin/GoogleDrive/sanji/input'
 
-        ipl_img = Image.open(path_to_image).convert('RGB')  # read as rgb
-        ipl_img = ImageOps.exif_transpose(ipl_img)
+    path_to_base = f'/media/yochinNAS8782/_Dataset/Cloud_Data/SanjiGallery/onsite_test2'
+    path_to_files = os.path.join(path_to_base, 'input')
 
-        duration_time_in_sec = 0 + ith
-        detection_results, service_results, repr_service_index, repr_service_name, im2show = \
-            handler.process_inference_request(ipl_img, duration_time_in_sec)  # request
-        # detection_results, service_results, rep_service_name, im2show = \
-        #     handler.process_inference_request_imgurl(image_url, duration_time_in_sec)        # request
+    while True:
+        list_files = [f for f in os.listdir(path_to_files) if
+                      os.path.isfile(os.path.join(path_to_files, f))]
+        list_files = sorted(list_files)
+        for ith, image_filename in enumerate(list_files):
+            # 3. Give an image and get the results
+            path_to_image = os.path.join(path_to_files, image_filename)
+            if not os.path.exists(path_to_image):
+                continue
 
-        # 4. Print the results
-        print("Detection Result: {}".format(json.dumps(detection_results)))
-        for result in detection_results:
-            print(
-                f"  BBox(x1={result[0]},y1={result[1]},x2={result[2]},y2={result[3]}) => {handler.det_classes[result[4]]}")
+            print('\n')
+            print('image_filename: ', image_filename)
+            ipl_img = Image.open(path_to_image).convert('RGB')  # read as rgb
+            ipl_img = ImageOps.exif_transpose(ipl_img)
 
-        print("\n")
-        print("Possible Service Results: ")
-        for sac_name, result in zip(handler.sac_classes, service_results):
-            print(f"  {sac_name}: {result:.4f}")
+            duration_time_in_sec = 0 + ith
+            detection_results, service_results, repr_service_index, repr_service_name, im2show = \
+                handler.process_inference_request(ipl_img, duration_time_in_sec)  # request
 
-        print('\n')
-        print(f'Representative Service index and name: ', repr_service_index, repr_service_name)
+            # 4. Print the results
+            print("Detection Result: {}".format(json.dumps(detection_results)))
+            for result in detection_results:
+                print(
+                    f"  BBox(x1={result[0]},y1={result[1]},x2={result[2]},y2={result[3]}) => {handler.det_classes[result[4]]}")
 
-        # 5. Save the result image
-        if im2show is not None:
-            # im2show.save(f'vis/{image_filename}')
-            im2show.save(f'/home/yochin/GoogleDrive/sanji/vis/{image_filename}')
-            # shutil.move(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
-            #              f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
+            print("\n")
+            print("Possible Service Results: ")
+            for sac_name, result in zip(handler.sac_classes, service_results):
+                print(f"  {sac_name}: {result:.4f}")
 
-    print('TableServiceAlarmRequestHandler request is processed!')
+            print('\n')
+            print(f'Representative Service index and name: ', repr_service_index, repr_service_name)
+
+            # 5. Save the result image
+            if im2show is not None:
+                # im2show.save(f'vis/{image_filename}')
+                # im2show.save(f'/home/yochin/GoogleDrive/sanji/vis/{image_filename}')
+                # shutil.move(f'/home/yochin/GoogleDrive/sanji/input/{image_filename}',
+                #              f'/home/yochin/GoogleDrive/sanji/processed/{image_filename}')
+                im2show.save(os.path.join(path_to_base, 'vis', image_filename))
+                # shutil.move(os.path.join(path_to_base, 'input', image_filename),
+                #             os.path.join(path_to_base, 'processed', image_filename))
+
+                import cv2
+                np_im2show = np.array(im2show)
+                cv_im2show = cv2.cvtColor(np_im2show, cv2.COLOR_RGB2BGR)
+
+                cv2.imshow('display', cv_im2show)
+                cv2.waitKey(10)
+
+
+        print('TableServiceAlarmRequestHandler request is processed!')

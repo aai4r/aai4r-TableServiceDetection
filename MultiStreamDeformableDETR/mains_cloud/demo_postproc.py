@@ -246,16 +246,25 @@ class postprocessor():
         #     # else:
         #     #     print('alarm dessert is not activate')
         #     #     print()
+        # # alarm
+        # self.alarm_refill_amount = 0.15 # under this amount
+        # self.alarm_duration_sec = 10 # sec
+        # self.alarm_min_num_trk = 5
 
+        print('In check_alarm: ')
         for trk in tracks:
             lasting_time = trk['cap_times'][-1] - np.array(trk['cap_times'])
             over_duration = lasting_time >= self.alarm_duration_sec
-            over_duration_t_index = [ith for ith, item in enumerate(over_duration) if item]
+            over_duration_t_index = [ith for ith, item in enumerate(over_duration) if item]     # index of valid frames
 
             if len(over_duration_t_index) > 0:
                 start_index = max(over_duration_t_index)
                 end_index = len(trk['cap_times'])
                 num_trk_T = end_index - start_index + 1
+
+                print('  {}: {}'.format(trk['rep_class'], trk['bboxes'][-1]))
+                print('\tdet_counter: {}'.format(trk['det_counter']))
+                print('\tnum_trk_T: {} > {}'.format(num_trk_T, self.alarm_min_num_trk))
 
                 # 1) refill dishes
                 if trk['rep_class'] in ['dish', 'cup'] and num_trk_T > self.alarm_min_num_trk:
@@ -264,7 +273,6 @@ class postprocessor():
                         amount_pred_last3 = statistics.mean(trk['fooddrink_amount_pred'][start_index:end_index][-3:])
                         # max_fooddrink_amount_pred = max(trk['fooddrink_amount_pred'])
 
-                        print('{}: \n'.format(trk['rep_class']))
                         print('\tamount_pred_median: {} < {}'.format(amount_pred_median, self.alarm_refill_amount))
                         print('\tamount_pred_last3: {} < {}'.format(amount_pred_last3, self.alarm_refill_amount))
                         # print('\tmax_fooddrink_amount_pred: {} > 0.0'.format(max_fooddrink_amount_pred))
@@ -282,6 +290,8 @@ class postprocessor():
                             alarms['refill'].append(trk)
                     except:
                         print('exception is raised')
+                else:
+                    print('\tThis trk is not considered as alarm')
 
                 # # 2) clean trash
                 # if trk['rep_class'] in ['trash'] and over_duration.any() and num_trk_T > self.alarm_min_num_trk:
