@@ -30,6 +30,7 @@ from MultiStreamDeformableDETR.my_debug import draw_bboxes_on_pil
 from PIL import ImageDraw
 from MultiStreamDeformableDETR.mains_cloud.service_manager import ServiceManager
 
+# use NN to find the service alarm
 
 class TableServiceAlarm:
     def __init__(self, model_path, list_service_name=('no_service', 'refill_food', 'found_trash',
