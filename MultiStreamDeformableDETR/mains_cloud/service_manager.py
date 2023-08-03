@@ -30,10 +30,9 @@ class ServiceInfo:
         #         self.current_decision = False
 
         if self.current_secs - self.last_activated_secs <= self.re_active_limit_secs:
-            # if self.current_decision:
-            #     print('current_decision is True, but changed to False by last act rule')
-
-            self.current_decision = False
+            if self.current_decision:
+                print('\tcurrent_decision is True, but changed to False by last act rule: cur_sec, last_act_sec, cap_sec, limit_sec :', self.current_secs, self.last_activated_secs, (self.current_secs - self.last_activated_secs), self.re_active_limit_secs)
+                self.current_decision = False
 
     def update(self):
         if self.current_decision:
@@ -65,6 +64,7 @@ class ServiceManager:
         self.list_services[self.sname_to_index['no_service']].set_prob(1. - max(pred_service_prob), duration_time_in_sec)
         for ith, ith_service in enumerate(self.list_services[1:]):
             ith_service.set_prob(pred_service_prob[ith], duration_time_in_sec)  # set prob and get a decision
+        print('[INFO] [yochin] [ServiceManager.process] [.set_prob] list_services[1].current_decision: ', self.list_services[1].current_decision)
 
         # # add manual decision
         # # apply 'refill_food' prob by multiplying 'provide_dessert' prob
@@ -81,6 +81,7 @@ class ServiceManager:
         # check limits, change to F if T is in limited_times (5min)
         for ith in range(len(pred_service_prob)):
             self.list_services[ith+1].check_limits()
+        print('[INFO] [yochin] [ServiceManager.process] [.check_limits] list_services[1].current_decision: ', self.list_services[1].current_decision)
 
         # return only-one service with max prob
         ret_max_prob = -1
@@ -92,6 +93,7 @@ class ServiceManager:
                 ret_max_prob = ith_service.prob
                 ret_service = ith_service.service_name
                 ret_service_index = ith
+                print('[INFO] [yochin] [ServiceManager.process] set_ret_value: max_prob/ret_service/ret_index: ', ret_max_prob, ret_service, ret_service_index)
 
         # remove other activations (T to F)
         for ith_service in self.list_services[1:]:
