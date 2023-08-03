@@ -51,8 +51,8 @@ class table_service_alarm_movavg:
                 cur_avg[class_name] = np.mean(np.array(self.num_dets[class_name][cur_b:]))
 
                 print(class_name, self.num_dets[class_name])
-                print('\tprev:', prev_avg[class_name])
-                print('\tcur:', cur_avg[class_name])
+                print('\tprev avg:', prev_avg[class_name])
+                print('\tcur avg:', cur_avg[class_name])
 
                 self.list_prev_avg[class_name].append(prev_avg[class_name])
                 self.list_cur_avg[class_name].append(cur_avg[class_name])
@@ -74,10 +74,13 @@ class table_service_alarm_movavg:
         for contents, container in zip(['food', 'drink'], ['dish', 'cup']):
             num_empty_food_cur = cur_avg[container] - cur_avg[contents]
             num_empty_food_prev = prev_avg[container] - prev_avg[contents]
-            print(f'{contents}(prev, cur): {num_empty_food_prev}, {num_empty_food_cur}')
+            cur_prev_gap = abs(num_empty_food_cur) - abs(num_empty_food_prev)
+            print(f'num empty {contents} (prev, cur): {num_empty_food_prev}, {num_empty_food_cur}')
+            print(f'check cond. num_empty_food_cur {num_empty_food_cur} > {self.var_th} and cur_prev_gap {cur_prev_gap} > {self.var_th}')
             if num_empty_food_cur > self.var_th and \
-                abs(num_empty_food_cur) - abs(num_empty_food_prev) > self.var_th:
+                cur_prev_gap > self.var_th:
                 service_results[0] = 1.0
+                print('\t set to 1.0')
 
         # return service_results, repr_service_index, repr_service_name
         return service_results
